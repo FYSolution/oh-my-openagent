@@ -6751,6 +6751,98 @@
             "exa",
             "tavily"
           ]
+        },
+        "prefer_local": {
+          "type": "boolean"
+        },
+        "local": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "browser": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "fetch-only"
+              ]
+            },
+            "max_pages": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 15
+            },
+            "max_depth": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "timeout_ms": {
+              "type": "number",
+              "minimum": 5000
+            },
+            "domain_page_cap": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "cooldown_ms": {
+              "type": "number",
+              "minimum": 200
+            },
+            "headless": {
+              "type": "boolean"
+            },
+            "blocked_domains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cache": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ttl_minutes": {
+                  "type": "number",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "second_brain": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "search_default_top": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "inject_context": {
+          "type": "boolean"
+        },
+        "max_inject_tokens": {
+          "type": "number",
+          "minimum": 100,
+          "maximum": 20000
+        },
+        "auto_init": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

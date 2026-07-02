@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "zod";
 
 export const HookNameSchema = z.enum([
   "todo-continuation-enforcer",
@@ -56,9 +56,10 @@ export const HookNameSchema = z.enum([
   "read-image-resizer",
   "todo-description-override",
   "webfetch-redirect-guard",
+  "websearch-local-redirect",
   "fsync-skip-warning",
   "plan-format-validator",
   "legacy-plugin-toast",
-])
+]);
 
-export type HookName = z.infer<typeof HookNameSchema>
+export type HookName = z.infer<typeof HookNameSchema>;

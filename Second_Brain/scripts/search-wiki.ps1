@@ -2,19 +2,24 @@
 .SYNOPSIS
     Keyword search over Second Brain wiki pages with ranked results.
 .DESCRIPTION
-    Searches all markdown files in wiki/ for keywords. Supports multi-word
-    queries with AND logic. Returns ranked results as a markdown table
-    including file path, matching line, and frontmatter tags.
+    Searches committed fragments in wiki/fragments/ for keywords. The generated
+    wiki/.compiled/, wiki/log/, and wiki/journal/ trees are NOT searched, so
+    results are deterministic across machines and never duplicate a fragment
+    with its compiled copy. Multi-word queries use AND logic; when AND matches
+    nothing it falls back to OR (any keyword, scaled by the fraction matched).
+    Keywords hitting a fragment's target/tags are weighted higher. Returns
+    ranked results as a markdown table including file path, matching line, and
+    frontmatter tags.
 .PARAMETER Query
     Space-separated keywords. All keywords must appear in a file for it to match.
 .PARAMETER Top
     Maximum number of results to return. Default: 20.
 .PARAMETER Folder
-    Restrict search to a specific wiki subfolder (e.g., "entities", "concepts").
+    Restrict search to a fragments subfolder / author (e.g., "felix").
 .EXAMPLE
     .\search-wiki.ps1 "notification email template"
 .EXAMPLE
-    .\search-wiki.ps1 "auth" -Top 5 -Folder entities
+    .\search-wiki.ps1 "auth" -Top 5 -Folder felix
 #>
 
 param(
@@ -29,14 +34,126 @@ param(
 )
 
 $wikiRoot = (Resolve-Path (Join-Path $PSScriptRoot ".." "wiki")).Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot ".." "..")).Path
+$fragmentsRoot = Join-Path $wikiRoot "fragments"
 
-# Determine search path
-$searchPath = $wikiRoot
+# Determine search path. Fragments are the committed source of truth; the
+# generated .compiled/, log/, and journal/ trees are intentionally excluded.
+$searchPath = $fragmentsRoot
 if ($Folder) {
-    $searchPath = Join-Path $wikiRoot $Folder
+    $searchPath = Join-Path $fragmentsRoot $Folder
     if (-not (Test-Path $searchPath)) {
         Write-Error "Folder not found: $searchPath"
         exit 1
+    }
+}
+
+# ─────────────────────────────────────────────
+# Freshness Envelope helpers (kept in sync with compile-wiki.ps1)
+# ─────────────────────────────────────────────
+
+function Get-AnchorHash {
+    param([string]$RepoRoot, [string]$Spec)
+    if ($Spec -notmatch '^(.+)#L(\d+)-L(\d+)$') { return "SPEC" }
+    $relPath = $Matches[1]; $start = [int]$Matches[2]; $end = [int]$Matches[3]
+    $full = Join-Path $RepoRoot $relPath
+    if (-not (Test-Path $full)) { return "MISSING" }
+    $lines = @(Get-Content $full -Encoding UTF8)
+    if ($start -lt 1 -or $end -gt $lines.Count -or $start -gt $end) { return "RANGE" }
+    $slice = $lines[($start - 1)..($end - 1)] | ForEach-Object { $_.TrimEnd() }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(($slice -join "`n")))
+    } finally {
+        $sha.Dispose()
+    }
+    return (([System.BitConverter]::ToString($hashBytes) -replace '-', '').ToLower()).Substring(0, 8)
+}
+
+function Get-Frontmatter($filePath) {
+    $lines = Get-Content $filePath -Encoding UTF8 -ErrorAction SilentlyContinue
+    $fm = @{}
+    $inFm = $false; $done = $false
+    $fmLines = @()
+    foreach ($line in $lines) {
+        $t = $line.Trim()
+        if (-not $done -and $t -eq "---") {
+            if (-not $inFm) { $inFm = $true; continue } else { break }
+        }
+        if ($inFm -and $t -ne "") { $fmLines += $t }
+    }
+    # Merge multiline flow arrays (formatter reflow) back onto their key.
+    $logical = @()
+    foreach ($fl in $fmLines) {
+        if ($fl -match "^(\w[\w-]*):") { $logical += $fl }
+        elseif ($logical.Count -gt 0) { $logical[-1] = ($logical[-1] + " " + $fl).Trim() }
+    }
+    foreach ($ll in $logical) {
+        if ($ll -match "^(\w[\w-]*):\s*(.+)$") {
+            $key = $Matches[1]; $value = $Matches[2].Trim()
+            if ($value -match "^\[(.*)\]$") { $value = @(($Matches[1] -split ",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }) }
+            elseif ($value -match "^['""](.+)['""]$") { $value = $Matches[1] }
+            $fm[$key] = $value
+        }
+    }
+    return $fm
+}
+
+function Get-FreshnessState {
+    param($Frontmatter, [string]$RepoRoot)
+    $type = $Frontmatter["type"]
+    $created = $Frontmatter["created"]
+    $lastVerified = $Frontmatter["last_verified"]
+    $ttlDays = $Frontmatter["ttl_days"]
+    $trust = if ($Frontmatter["trust"]) { $Frontmatter["trust"] } else { "curated" }
+    $anchors = $Frontmatter["code_anchors"]
+
+    $defaults = @{ lesson = 180; decision = 365; entity = 30; concept = 90; source = 14; analysis = 60; overview = 120; synthesis = 60 }
+    $ttl = if ($ttlDays) { [double]$ttlDays } elseif ($type -and $defaults.ContainsKey($type)) { [double]$defaults[$type] } else { 60.0 }
+
+    $refStr = if ($lastVerified) { $lastVerified } else { $created }
+    $refDate = [DateTime]::MinValue
+    $parsed = [DateTime]::TryParse($refStr, [ref]$refDate)
+    $ageDays = if ($parsed) { (New-TimeSpan -Start $refDate -End (Get-Date)).TotalDays } else { $null }
+
+    $drift = $null
+    if ($anchors) {
+        $anchorList = if ($anchors -is [array]) { $anchors } else { @($anchors) }
+        foreach ($a in $anchorList) {
+            $a = "$a".Trim()
+            if ($a -notmatch '@') { continue }
+            $parts = $a -split '@', 2
+            $current = Get-AnchorHash -RepoRoot $RepoRoot -Spec $parts[0].Trim()
+            if ($current -eq "MISSING" -or $current -eq "RANGE" -or $current -eq "SPEC") { $drift = $current; break }
+            if ($current -ne $parts[1].Trim()) { $drift = "mismatch"; break }
+        }
+    }
+
+    $state = "UNKNOWN"
+    if ($drift) { $state = "DRIFTED" }
+    elseif ($null -ne $ageDays) {
+        if ($ageDays -le $ttl) { $state = "FRESH" }
+        elseif ($ageDays -le ($ttl * 3)) { $state = "AGING" }
+        else { $state = "STALE" }
+    }
+    return @{ State = $state; Trust = $trust }
+}
+
+function Get-FreshnessFactor([string]$State) {
+    switch ($State) {
+        "FRESH" { 1.0 } "AGING" { 0.85 } "UNKNOWN" { 0.8 } "STALE" { 0.6 } "DRIFTED" { 0.3 } default { 0.8 }
+    }
+}
+
+function Get-TrustFactor([string]$Trust) {
+    switch ($Trust) {
+        "verified" { 1.2 } "curated" { 1.0 } "source" { 0.9 } "untrusted" { 0.3 } default { 1.0 }
+    }
+}
+
+function Get-StateBadge([string]$State) {
+    switch ($State) {
+        "FRESH" { "✅" } "AGING" { "🟡" } "STALE" { "🟠" } "DRIFTED" { "🔴" } default { "⚪" }
     }
 }
 
@@ -95,49 +212,78 @@ function Get-BestMatchLine($filePath, $keywords) {
     }
 }
 
-# Search all markdown files
-$results = @()
+# Collect candidates (files matching >= 1 keyword). Scoring is deferred until we
+# know whether any file matched ALL keywords (AND) or we must fall back to OR.
+$candidates = @()
 
 Get-ChildItem $searchPath -Recurse -Filter "*.md" | ForEach-Object {
+    if ($_.Name -eq 'README.md') { return }
     $filePath = $_.FullName
     $content = Get-Content $filePath -Raw -ErrorAction SilentlyContinue
     if (-not $content) { return }
 
-    # AND logic: all keywords must appear (case-insensitive)
-    $allMatch = $true
+    $fm = Get-Frontmatter $filePath
+    $targetText = "$($fm['target'])"
+    $tagsVal = $fm['tags']
+    $tagsText = if ($tagsVal -is [array]) { $tagsVal -join ' ' } else { "$tagsVal" }
+
+    # Per-keyword: count body hits, and note target/tag hits for weighting.
     $hitCount = 0
+    $matchedCount = 0
+    $tagTargetBonus = 0
     foreach ($kw in $keywords) {
-        $matches = [regex]::Matches($content, [regex]::Escape($kw), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        if ($matches.Count -eq 0) {
-            $allMatch = $false
-            break
-        }
-        $hitCount += $matches.Count
+        $esc = [regex]::Escape($kw)
+        $bodyHits = [regex]::Matches($content, $esc, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase).Count
+        $inTarget = [regex]::IsMatch($targetText, $esc, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $inTags = [regex]::IsMatch($tagsText, $esc, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($bodyHits -gt 0) { $hitCount += $bodyHits }
+        if ($inTarget) { $tagTargetBonus += 6 }
+        if ($inTags) { $tagTargetBonus += 3 }
+        if ($bodyHits -gt 0 -or $inTarget -or $inTags) { $matchedCount++ }
     }
+    if ($matchedCount -eq 0) { return }
 
-    if (-not $allMatch) { return }
-
-    # Get tags and best matching line
     $tags = Get-FrontmatterTags $filePath
     $matchInfo = Get-BestMatchLine $filePath $keywords
-
-    # Compute rank score: total keyword hits + bonus for line density
-    $score = $hitCount + ($matchInfo.Score * 5)
-
-    # Relative path from wiki root
+    $freshness = Get-FreshnessState $fm $repoRoot
     $relPath = $filePath.Substring($wikiRoot.Length + 1) -replace '\\', '/'
 
+    $candidates += [PSCustomObject]@{
+        Path           = $relPath
+        HitCount       = $hitCount
+        MatchedCount   = $matchedCount
+        TagTargetBonus = $tagTargetBonus
+        LineScore      = $matchInfo.Score
+        LineNum        = $matchInfo.LineNum
+        Line           = $matchInfo.Line
+        Tags           = $tags
+        State          = $freshness.State
+        Trust          = $freshness.Trust
+    }
+}
+
+# AND first; OR fallback only when nothing matched every keyword.
+$andCandidates = @($candidates | Where-Object { $_.MatchedCount -eq $keywords.Count })
+$orMode = $andCandidates.Count -eq 0
+$chosen = if ($orMode) { $candidates } else { $andCandidates }
+
+$results = @()
+foreach ($c in $chosen) {
+    $base = $c.HitCount + ($c.LineScore * 5) + $c.TagTargetBonus
+    $fraction = if ($orMode) { $c.MatchedCount / $keywords.Count } else { 1 }
+    $score = [math]::Round($base * $fraction * (Get-FreshnessFactor $c.State) * (Get-TrustFactor $c.Trust), 2)
     $results += [PSCustomObject]@{
-        Path    = $relPath
+        Path    = $c.Path
         Score   = $score
-        LineNum = $matchInfo.LineNum
-        Line    = $matchInfo.Line
-        Tags    = $tags
+        LineNum = $c.LineNum
+        Line    = $c.Line
+        Tags    = $c.Tags
+        State   = $c.State
     }
 }
 
 # Sort by score descending, take top N
-$results = $results | Sort-Object Score -Descending | Select-Object -First $Top
+$results = @($results | Sort-Object Score -Descending | Select-Object -First $Top)
 
 # Output as markdown table
 if ($results.Count -eq 0) {
@@ -148,13 +294,13 @@ if ($results.Count -eq 0) {
 Write-Host ""
 Write-Host "## Search Results for: ``$Query``"
 Write-Host ""
-Write-Host "| # | Path | Line | Match | Tags |"
-Write-Host "|---|------|------|-------|------|"
+Write-Host "| # | Path | Line | Match | State | Tags |"
+Write-Host "|---|------|------|-------|-------|------|"
 
 $rank = 0
 foreach ($r in $results) {
     $rank++
-    Write-Host "| $rank | $($r.Path) | L$($r.LineNum) | $($r.Line) | $($r.Tags) |"
+    Write-Host "| $rank | $($r.Path) | L$($r.LineNum) | $($r.Line) | $(Get-StateBadge $r.State) | $($r.Tags) |"
 }
 
 Write-Host ""

@@ -9,7 +9,10 @@ export { createToolOutputTruncatorHook } from "./tool-output-truncator";
 export { createDirectoryAgentsInjectorHook } from "./directory-agents-injector";
 export { createDirectoryReadmeInjectorHook } from "./directory-readme-injector";
 export { createEmptyTaskResponseDetectorHook } from "./empty-task-response-detector";
-export { createAnthropicContextWindowLimitRecoveryHook, type AnthropicContextWindowLimitRecoveryOptions } from "./anthropic-context-window-limit-recovery";
+export {
+  createAnthropicContextWindowLimitRecoveryHook,
+  type AnthropicContextWindowLimitRecoveryOptions,
+} from "./anthropic-context-window-limit-recovery";
 
 export { createThinkModeHook } from "./think-mode";
 export {
@@ -21,13 +24,15 @@ export {
 } from "./model-fallback/hook";
 export { createClaudeCodeHooksHook } from "./claude-code-hooks";
 export { createRulesInjectorHook } from "./rules-injector";
-export { createBackgroundNotificationHook } from "./background-notification"
+export { createBackgroundNotificationHook } from "./background-notification";
 export { createAutoUpdateCheckerHook } from "./auto-update-checker";
 export { createCodegraphBootstrapHook } from "./codegraph-bootstrap";
 export { createAstGrepSgProvisionHook } from "./ast-grep-sg-provision";
 
 export { createAgentUsageReminderHook } from "./agent-usage-reminder";
 export { createKeywordDetectorHook } from "./keyword-detector";
+export { createSecondBrainInjectorHook } from "./second-brain-injector";
+export { createSecondBrainCompactionInjector } from "./second-brain-injector";
 export { createNonInteractiveEnvHook } from "./non-interactive-env";
 export { createInteractiveBashSessionHook } from "./interactive-bash-session";
 
@@ -47,7 +52,7 @@ export { createSisyphusJuniorNotepadHook } from "./sisyphus-junior-notepad";
 export { createTaskResumeInfoHook } from "./task-resume-info";
 export { createStartWorkHook } from "./start-work";
 export { createAtlasHook } from "./atlas";
-export { createTeamToolGating } from "./team-tool-gating"
+export { createTeamToolGating } from "./team-tool-gating";
 export { createDelegateTaskRetryHook } from "./delegate-task-retry";
 export { createQuestionLabelTruncatorHook } from "./question-label-truncator";
 export { createStopContinuationGuardHook, type StopContinuationGuard } from "./stop-continuation-guard";
@@ -61,11 +66,12 @@ export { createWriteExistingFileGuardHook } from "./write-existing-file-guard";
 export { createBashFileReadGuardHook } from "./bash-file-read-guard";
 export { createHashlineReadEnhancerHook } from "./hashline-read-enhancer";
 export { createJsonErrorRecoveryHook, JSON_ERROR_TOOL_EXCLUDE_LIST, JSON_ERROR_PATTERNS, JSON_ERROR_REMINDER } from "./json-error-recovery";
-export { createReadImageResizerHook } from "./read-image-resizer"
-export { createTodoDescriptionOverrideHook } from "./todo-description-override"
-export { createWebFetchRedirectGuardHook } from "./webfetch-redirect-guard"
-export { createLegacyPluginToastHook } from "./legacy-plugin-toast"
-export { createFsyncSkipWarningHook } from "./fsync-skip-warning"
-export { createNotepadWriteGuardHook } from "./notepad-write-guard"
-export { createPlanFormatValidatorHook } from "./plan-format-validator"
-export { createMonitorStatusInjectorHook } from "./monitor-status-injector"
+export { createReadImageResizerHook } from "./read-image-resizer";
+export { createTodoDescriptionOverrideHook } from "./todo-description-override";
+export { createWebFetchRedirectGuardHook } from "./webfetch-redirect-guard";
+export { createLegacyPluginToastHook } from "./legacy-plugin-toast";
+export { createFsyncSkipWarningHook } from "./fsync-skip-warning";
+export { createNotepadWriteGuardHook } from "./notepad-write-guard";
+export { createPlanFormatValidatorHook } from "./plan-format-validator";
+export { createMonitorStatusInjectorHook } from "./monitor-status-injector";
+export { createWebsearchLocalRedirectHook } from "./websearch-local-redirect";

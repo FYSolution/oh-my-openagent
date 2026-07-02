@@ -1,0 +1,1 @@
+export { createWebsearchLocalRedirectHook } from "./hook";

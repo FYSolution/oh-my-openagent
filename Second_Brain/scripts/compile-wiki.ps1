@@ -19,6 +19,111 @@ $secondBrainRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $fragmentsRoot = Join-Path $secondBrainRoot "wiki" "fragments"
 $compiledRoot = Join-Path $secondBrainRoot "wiki" ".compiled"
 $rawRoot = Join-Path $secondBrainRoot "raw"
+$repoRoot = (Resolve-Path (Join-Path $secondBrainRoot "..")).Path
+
+# ─────────────────────────────────────────────
+# Freshness Envelope — code-anchor + timestamp staleness detection
+# ─────────────────────────────────────────────
+
+# Canonical anchor hash: first 8 lowercase hex of SHA256 over the 1-indexed inclusive
+# line range, each line TrimEnd'd, joined with LF, file read as UTF8. Language-agnostic
+# so a future TypeScript verifier produces identical hashes.
+function Get-AnchorHash {
+    param([string]$RepoRoot, [string]$Spec)
+    if ($Spec -notmatch '^(.+)#L(\d+)-L(\d+)$') { return "SPEC" }
+    $relPath = $Matches[1]; $start = [int]$Matches[2]; $end = [int]$Matches[3]
+    $full = Join-Path $RepoRoot $relPath
+    if (-not (Test-Path $full)) { return "MISSING" }
+    $lines = @(Get-Content $full -Encoding UTF8)
+    if ($start -lt 1 -or $end -gt $lines.Count -or $start -gt $end) { return "RANGE" }
+    $slice = $lines[($start - 1)..($end - 1)] | ForEach-Object { $_.TrimEnd() }
+    $text = ($slice -join "`n")
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text))
+    } finally {
+        $sha.Dispose()
+    }
+    return (([System.BitConverter]::ToString($hashBytes) -replace '-', '').ToLower()).Substring(0, 8)
+}
+
+# Freshness state machine: FRESH -> AGING -> STALE (time decay) with DRIFTED override
+# when a code anchor no longer matches its stored hash. Time-only fragments still get a
+# state from age vs a per-type TTL; anchored fragments additionally get drift detection.
+function Get-FreshnessState {
+    param($Frontmatter, [string]$RepoRoot)
+    $type = $Frontmatter["type"]
+    $created = $Frontmatter["created"]
+    $lastVerified = $Frontmatter["last_verified"]
+    $ttlDays = $Frontmatter["ttl_days"]
+    $trust = if ($Frontmatter["trust"]) { $Frontmatter["trust"] } else { "curated" }
+    $anchors = $Frontmatter["code_anchors"]
+
+    $defaults = @{ lesson = 180; decision = 365; entity = 30; concept = 90; source = 14; analysis = 60; overview = 120; synthesis = 60 }
+    $ttl = if ($ttlDays) { [double]$ttlDays } elseif ($type -and $defaults.ContainsKey($type)) { [double]$defaults[$type] } else { 60.0 }
+
+    $refStr = if ($lastVerified) { $lastVerified } else { $created }
+    $refDate = [DateTime]::MinValue
+    $parsed = [DateTime]::TryParse($refStr, [ref]$refDate)
+    $ageDays = if ($parsed) { (New-TimeSpan -Start $refDate -End (Get-Date)).TotalDays } else { $null }
+
+    $drift = $null
+    if ($anchors) {
+        $anchorList = if ($anchors -is [array]) { $anchors } else { @($anchors) }
+        foreach ($a in $anchorList) {
+            $a = "$a".Trim()
+            if ($a -notmatch '@') { continue }
+            $parts = $a -split '@', 2
+            $spec = $parts[0].Trim(); $stored = $parts[1].Trim()
+            $current = Get-AnchorHash -RepoRoot $RepoRoot -Spec $spec
+            if ($current -eq "MISSING") { $drift = "missing: $spec"; break }
+            if ($current -eq "RANGE") { $drift = "range: $spec"; break }
+            if ($current -eq "SPEC") { $drift = "badspec: $spec"; break }
+            if ($current -ne $stored) { $drift = "mismatch: $spec"; break }
+        }
+    }
+
+    $state = "UNKNOWN"
+    if ($drift) {
+        $state = "DRIFTED"
+    } elseif ($null -ne $ageDays) {
+        if ($ageDays -le $ttl) { $state = "FRESH" }
+        elseif ($ageDays -le ($ttl * 3)) { $state = "AGING" }
+        else { $state = "STALE" }
+    }
+
+    return @{
+        State   = $state
+        Drift   = $drift
+        RefDate = $refStr
+        Trust   = $trust
+        AgeDays = if ($null -ne $ageDays) { [math]::Round($ageDays, 1) } else { $null }
+        Ttl     = $ttl
+    }
+}
+
+function Get-StateBadge {
+    param([string]$State)
+    switch ($State) {
+        "FRESH" { "✅ fresh" }
+        "AGING" { "🟡 aging" }
+        "STALE" { "🟠 stale" }
+        "DRIFTED" { "🔴 drifted" }
+        default { "⚪ unknown" }
+    }
+}
+
+function Get-StateRank {
+    param([string]$State)
+    switch ($State) {
+        "DRIFTED" { 4 }
+        "STALE" { 3 }
+        "UNKNOWN" { 2 }
+        "AGING" { 1 }
+        "FRESH" { 0 }
+        default { 2 }
+    }
+}
 
 # Clean and recreate compiled directory
 if (Test-Path $compiledRoot) {
@@ -36,6 +141,7 @@ function Parse-FragmentFrontmatter($filePath) {
     $inFrontmatter = $false
     $frontmatterDone = $false
     $bodyStart = 0
+    $fmLines = @()
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $line = $lines[$i].Trim()
@@ -49,20 +155,37 @@ function Parse-FragmentFrontmatter($filePath) {
                 continue
             }
         }
-        if ($inFrontmatter -and -not $frontmatterDone) {
-            if ($line -match "^(\w[\w-]*):\s*(.+)$") {
-                $key = $Matches[1]
-                $value = $Matches[2].Trim()
-                # Handle YAML arrays: [item1, item2]
-                if ($value -match "^\[(.+)\]$") {
-                    $value = ($Matches[1] -split ",") | ForEach-Object { $_.Trim() }
-                }
-                # Handle bare values (strip quotes)
-                elseif ($value -match "^['""](.+)['""]$") {
-                    $value = $Matches[1]
-                }
-                $frontmatter[$key] = $value
+        if ($inFrontmatter -and -not $frontmatterDone -and $line -ne "") {
+            $fmLines += $line
+        }
+    }
+
+    # Merge continuation lines so multiline flow arrays (as emitted by markdown
+    # formatters that reflow `key: [a, b]` across lines) collapse back onto their
+    # key. A line starts a new key only if it looks like `word:`; everything else
+    # is a continuation of the current value.
+    $logical = @()
+    foreach ($fl in $fmLines) {
+        if ($fl -match "^(\w[\w-]*):") {
+            $logical += $fl
+        } elseif ($logical.Count -gt 0) {
+            $logical[-1] = ($logical[-1] + " " + $fl).Trim()
+        }
+    }
+
+    foreach ($ll in $logical) {
+        if ($ll -match "^(\w[\w-]*):\s*(.+)$") {
+            $key = $Matches[1]
+            $value = $Matches[2].Trim()
+            # Flow array (single- or multi-line, now merged): [item1, item2]
+            if ($value -match "^\[(.*)\]$") {
+                $value = @(($Matches[1] -split ",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" })
             }
+            # Bare quoted scalar
+            elseif ($value -match "^['""](.+)['""]$") {
+                $value = $Matches[1]
+            }
+            $frontmatter[$key] = $value
         }
     }
 
@@ -89,6 +212,7 @@ if (Test-Path $fragmentsRoot) {
         $parsed["RelPath"] = $relPath
         $parsed["FileName"] = $file.Name
         $parsed["User"] = ($relPath -split "/")[0]
+        $parsed["Freshness"] = Get-FreshnessState $parsed.Frontmatter $repoRoot
         $allFragments += $parsed
     }
 }
@@ -183,6 +307,16 @@ foreach ($key in $targetGroups.Keys) {
 
     $hasSynthesis = ($fragments | Where-Object { $_.Fragment.Frontmatter["type"] -eq "synthesis" }).Count -gt 0
 
+    # Aggregate freshness: worst state across the target's fragments
+    $worstState = "FRESH"; $worstRank = 0
+    foreach ($fr in $fragments) {
+        $st = $fr.Fragment.Freshness.State
+        $rk = Get-StateRank $st
+        if ($rk -gt $worstRank) { $worstRank = $rk; $worstState = $st }
+    }
+    $driftedCount = @($fragments | Where-Object { $_.Fragment.Freshness.State -eq "DRIFTED" }).Count
+    $staleCount = @($fragments | Where-Object { $_.Fragment.Freshness.State -eq "STALE" }).Count
+
     $fragmentList = @($fragments | ForEach-Object {
         @{
             file = $_.Fragment.RelPath
@@ -200,6 +334,7 @@ foreach ($key in $targetGroups.Keys) {
         authors = @($authors)
         hasConflicts = $hasConflicts
         hasSynthesis = $hasSynthesis
+        freshness = @{ worst = $worstState; drifted = $driftedCount; stale = $staleCount }
         fragments = $fragmentList
     }
 }
@@ -224,6 +359,22 @@ $manifest.decisions = @($decisionFragments | ForEach-Object {
     }
 })
 
+# Fragments needing re-verification (stale by age or drifted from code)
+$needsVerification = @($allFragments |
+    Where-Object { $_.Freshness.State -eq "STALE" -or $_.Freshness.State -eq "DRIFTED" } |
+    Sort-Object { Get-StateRank $_.Freshness.State } -Descending |
+    ForEach-Object {
+        @{
+            file    = $_.RelPath
+            target  = $_.Frontmatter["target"]
+            type    = $_.Frontmatter["type"]
+            state   = $_.Freshness.State
+            detail  = if ($_.Freshness.Drift) { "anchor drift ($($_.Freshness.Drift))" } else { "age > TTL ($([math]::Round($_.Freshness.AgeDays))d / $($_.Freshness.Ttl)d)" }
+            refDate = $_.Freshness.RefDate
+        }
+    })
+$manifest.needsVerification = $needsVerification
+
 # Write manifest
 $manifestPath = Join-Path $compiledRoot "_manifest.json"
 $manifest | ConvertTo-Json -Depth 10 | Set-Content $manifestPath -Encoding UTF8
@@ -241,10 +392,16 @@ function Assemble-TargetPage($group) {
     $lastUpdated = ($fragments | Select-Object -First 1).Created
     $fragCount = $fragments.Count
 
+    $worstState = "FRESH"; $worstRank = 0
+    foreach ($fr in $fragments) {
+        $rk = Get-StateRank $fr.Fragment.Freshness.State
+        if ($rk -gt $worstRank) { $worstRank = $rk; $worstState = $fr.Fragment.Freshness.State }
+    }
+
     $output = @()
     $output += "# $($target -replace '-', ' ' -replace '(^| )(\w)', { $_.Value.ToUpper() })"
     $output += ""
-    $output += "> Compiled from $fragCount fragments by $authors | Last updated: $lastUpdated"
+    $output += "> Compiled from $fragCount fragments by $authors | Last updated: $lastUpdated | Freshness: $(Get-StateBadge $worstState)"
     $output += ""
 
     # Group by section
@@ -437,15 +594,20 @@ foreach ($type in $typeOrder) {
     if ($typeTargets) {
         $indexOutput += "## $(($type.Substring(0,1).ToUpper() + $type.Substring(1)) + 's')"
         $indexOutput += ""
-        $indexOutput += "| Target | Fragments | Authors | Last Updated | Conflicts |"
-        $indexOutput += "| ------ | --------- | ------- | ------------ | --------- |"
+        $indexOutput += "| Target | Fragments | Authors | Last Updated | Freshness | Conflicts |"
+        $indexOutput += "| ------ | --------- | ------- | ------------ | --------- | --------- |"
         foreach ($entry in ($typeTargets | Sort-Object { $_.Value.Target })) {
             $g = $entry.Value
             $conflictMark = if ($g.hasConflicts) { "⚠️" } else { "—" }
             $gAuthors = ($g.Fragments | ForEach-Object { $_.Author } | Select-Object -Unique) -join ", "
             $gLastUpdated = ($g.Fragments | Sort-Object { $_.Created } -Descending | Select-Object -First 1).Created
             $gFragCount = $g.Fragments.Count
-            $indexOutput += "| $($g.Target) | $gFragCount | $gAuthors | $gLastUpdated | $conflictMark |"
+            $gWorst = "FRESH"; $gWorstRank = 0
+            foreach ($fr in $g.Fragments) {
+                $rk = Get-StateRank $fr.Fragment.Freshness.State
+                if ($rk -gt $gWorstRank) { $gWorstRank = $rk; $gWorst = $fr.Fragment.Freshness.State }
+            }
+            $indexOutput += "| $($g.Target) | $gFragCount | $gAuthors | $gLastUpdated | $(Get-StateBadge $gWorst) | $conflictMark |"
         }
         $indexOutput += ""
     }
@@ -468,6 +630,20 @@ if ($recentFragments) {
     $indexOutput += ""
 }
 
+# Needs Verification (stale or drifted fragments)
+if ($needsVerification.Count -gt 0) {
+    $indexOutput += "## Needs Verification"
+    $indexOutput += ""
+    $indexOutput += "> Fragments whose knowledge has aged past its TTL or whose code anchors no longer match the source. Re-verify against code, then write an ``action: correct`` fragment to refresh."
+    $indexOutput += ""
+    $indexOutput += "| Fragment | Target | State | Detail |"
+    $indexOutput += "| -------- | ------ | ----- | ------ |"
+    foreach ($nv in $needsVerification) {
+        $indexOutput += "| $($nv.file) | $($nv.target) | $(Get-StateBadge $nv.state) | $($nv.detail) |"
+    }
+    $indexOutput += ""
+}
+
 $indexPath = Join-Path $compiledRoot "index.md"
 $indexOutput -join "`n" | Set-Content $indexPath -Encoding UTF8
 
@@ -481,4 +657,9 @@ Write-Host "   Targets: $($targetGroups.Count) | Lessons: $($lessonFragments.Cou
 if ($targetGroups.Values | Where-Object { $_.hasConflicts }) {
     $conflictTargets = ($targetGroups.Values | Where-Object { $_.hasConflicts } | ForEach-Object { $_.Target }) -join ", "
     Write-Host "   ⚠️  Conflicts detected in: $conflictTargets" -ForegroundColor Yellow
+}
+if ($needsVerification.Count -gt 0) {
+    $driftedTotal = @($needsVerification | Where-Object { $_.state -eq "DRIFTED" }).Count
+    $staleTotal = @($needsVerification | Where-Object { $_.state -eq "STALE" }).Count
+    Write-Host "   🔎 Needs verification: $($needsVerification.Count) ($driftedTotal drifted, $staleTotal stale) — see index.md" -ForegroundColor Yellow
 }

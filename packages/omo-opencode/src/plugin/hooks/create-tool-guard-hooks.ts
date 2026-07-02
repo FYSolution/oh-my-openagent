@@ -1,6 +1,6 @@
-import type { HookName, OhMyOpenCodeConfig } from "../../config"
-import type { ModelCacheState } from "../../plugin-state"
-import type { PluginContext } from "../types"
+import type { HookName, OhMyOpenCodeConfig } from "../../config";
+import type { ModelCacheState } from "../../plugin-state";
+import type { PluginContext } from "../types";
 
 import {
   createCommentCheckerHooks,
@@ -17,145 +17,135 @@ import {
   createJsonErrorRecoveryHook,
   createTodoDescriptionOverrideHook,
   createWebFetchRedirectGuardHook,
+  createWebsearchLocalRedirectHook,
   createTeamToolGating,
   createFsyncSkipWarningHook,
   createNotepadWriteGuardHook,
   createPlanFormatValidatorHook,
-} from "../../hooks"
-import {
-  getOpenCodeVersion,
-  isOpenCodeVersionAtLeast,
-  log,
-  OPENCODE_NATIVE_AGENTS_INJECTION_VERSION,
-} from "../../shared"
-import { safeCreateHook } from "../../shared/safe-create-hook"
+} from "../../hooks";
+import { getOpenCodeVersion, isOpenCodeVersionAtLeast, log, OPENCODE_NATIVE_AGENTS_INJECTION_VERSION } from "../../shared";
+import { safeCreateHook } from "../../shared/safe-create-hook";
 
 export type ToolGuardHooks = {
-  commentChecker: ReturnType<typeof createCommentCheckerHooks> | null
-  toolOutputTruncator: ReturnType<typeof createToolOutputTruncatorHook> | null
-  directoryAgentsInjector: ReturnType<typeof createDirectoryAgentsInjectorHook> | null
-  directoryReadmeInjector: ReturnType<typeof createDirectoryReadmeInjectorHook> | null
-  emptyTaskResponseDetector: ReturnType<typeof createEmptyTaskResponseDetectorHook> | null
-  rulesInjector: ReturnType<typeof createRulesInjectorHook> | null
-  tasksTodowriteDisabler: ReturnType<typeof createTasksTodowriteDisablerHook> | null
-  writeExistingFileGuard: ReturnType<typeof createWriteExistingFileGuardHook> | null
-  bashFileReadGuard: ReturnType<typeof createBashFileReadGuardHook> | null
-  hashlineReadEnhancer: ReturnType<typeof createHashlineReadEnhancerHook> | null
-  jsonErrorRecovery: ReturnType<typeof createJsonErrorRecoveryHook> | null
-  readImageResizer: ReturnType<typeof createReadImageResizerHook> | null
-  todoDescriptionOverride: ReturnType<typeof createTodoDescriptionOverrideHook> | null
-  webfetchRedirectGuard: ReturnType<typeof createWebFetchRedirectGuardHook> | null
-  fsyncSkipWarning: ReturnType<typeof createFsyncSkipWarningHook> | null
-  teamToolGating: ReturnType<typeof createTeamToolGating> | null
-  notepadWriteGuard: ReturnType<typeof createNotepadWriteGuardHook> | null
-  planFormatValidator: ReturnType<typeof createPlanFormatValidatorHook> | null
-}
+  commentChecker: ReturnType<typeof createCommentCheckerHooks> | null;
+  toolOutputTruncator: ReturnType<typeof createToolOutputTruncatorHook> | null;
+  directoryAgentsInjector: ReturnType<typeof createDirectoryAgentsInjectorHook> | null;
+  directoryReadmeInjector: ReturnType<typeof createDirectoryReadmeInjectorHook> | null;
+  emptyTaskResponseDetector: ReturnType<typeof createEmptyTaskResponseDetectorHook> | null;
+  rulesInjector: ReturnType<typeof createRulesInjectorHook> | null;
+  tasksTodowriteDisabler: ReturnType<typeof createTasksTodowriteDisablerHook> | null;
+  writeExistingFileGuard: ReturnType<typeof createWriteExistingFileGuardHook> | null;
+  bashFileReadGuard: ReturnType<typeof createBashFileReadGuardHook> | null;
+  hashlineReadEnhancer: ReturnType<typeof createHashlineReadEnhancerHook> | null;
+  jsonErrorRecovery: ReturnType<typeof createJsonErrorRecoveryHook> | null;
+  readImageResizer: ReturnType<typeof createReadImageResizerHook> | null;
+  todoDescriptionOverride: ReturnType<typeof createTodoDescriptionOverrideHook> | null;
+  webfetchRedirectGuard: ReturnType<typeof createWebFetchRedirectGuardHook> | null;
+  websearchLocalRedirect: ReturnType<typeof createWebsearchLocalRedirectHook> | null;
+  fsyncSkipWarning: ReturnType<typeof createFsyncSkipWarningHook> | null;
+  teamToolGating: ReturnType<typeof createTeamToolGating> | null;
+  notepadWriteGuard: ReturnType<typeof createNotepadWriteGuardHook> | null;
+  planFormatValidator: ReturnType<typeof createPlanFormatValidatorHook> | null;
+};
 
 export function createToolGuardHooks(args: {
-  ctx: PluginContext
-  pluginConfig: OhMyOpenCodeConfig
-  modelCacheState: ModelCacheState
-  isHookEnabled: (hookName: HookName) => boolean
-  safeHookEnabled: boolean
+  ctx: PluginContext;
+  pluginConfig: OhMyOpenCodeConfig;
+  modelCacheState: ModelCacheState;
+  isHookEnabled: (hookName: HookName) => boolean;
+  safeHookEnabled: boolean;
 }): ToolGuardHooks {
-  const { ctx, pluginConfig, modelCacheState, isHookEnabled, safeHookEnabled } = args
-  const safeHook = <T>(hookName: HookName, factory: () => T): T | null =>
-    safeCreateHook(hookName, factory, { enabled: safeHookEnabled })
+  const { ctx, pluginConfig, modelCacheState, isHookEnabled, safeHookEnabled } = args;
+  const safeHook = <T>(hookName: HookName, factory: () => T): T | null => safeCreateHook(hookName, factory, { enabled: safeHookEnabled });
 
   const commentChecker = isHookEnabled("comment-checker")
     ? safeHook("comment-checker", () => createCommentCheckerHooks(pluginConfig.comment_checker))
-    : null
+    : null;
 
   const toolOutputTruncator = isHookEnabled("tool-output-truncator")
     ? safeHook("tool-output-truncator", () =>
         createToolOutputTruncatorHook(ctx, {
           modelCacheState,
           experimental: pluginConfig.experimental,
-        }))
-    : null
+        }),
+      )
+    : null;
 
-  let directoryAgentsInjector: ReturnType<typeof createDirectoryAgentsInjectorHook> | null = null
+  let directoryAgentsInjector: ReturnType<typeof createDirectoryAgentsInjectorHook> | null = null;
   if (isHookEnabled("directory-agents-injector")) {
-    const currentVersion = getOpenCodeVersion()
-    const hasNativeSupport =
-      currentVersion !== null && isOpenCodeVersionAtLeast(OPENCODE_NATIVE_AGENTS_INJECTION_VERSION)
+    const currentVersion = getOpenCodeVersion();
+    const hasNativeSupport = currentVersion !== null && isOpenCodeVersionAtLeast(OPENCODE_NATIVE_AGENTS_INJECTION_VERSION);
     if (hasNativeSupport) {
       log("directory-agents-injector auto-disabled due to native OpenCode support", {
         currentVersion,
         nativeVersion: OPENCODE_NATIVE_AGENTS_INJECTION_VERSION,
-      })
+      });
     } else {
-      directoryAgentsInjector = safeHook("directory-agents-injector", () =>
-        createDirectoryAgentsInjectorHook(ctx, modelCacheState))
+      directoryAgentsInjector = safeHook("directory-agents-injector", () => createDirectoryAgentsInjectorHook(ctx, modelCacheState));
     }
   }
 
   const directoryReadmeInjector = isHookEnabled("directory-readme-injector")
-    ? safeHook("directory-readme-injector", () =>
-        createDirectoryReadmeInjectorHook(ctx, modelCacheState))
-    : null
+    ? safeHook("directory-readme-injector", () => createDirectoryReadmeInjectorHook(ctx, modelCacheState))
+    : null;
 
   const emptyTaskResponseDetector = isHookEnabled("empty-task-response-detector")
     ? safeHook("empty-task-response-detector", () => createEmptyTaskResponseDetectorHook(ctx))
-    : null
+    : null;
 
-  const cc = pluginConfig.claude_code
-  const skipClaudeUserRules = cc?.hooks === false
+  const cc = pluginConfig.claude_code;
+  const skipClaudeUserRules = cc?.hooks === false;
   const rulesInjector = isHookEnabled("rules-injector")
     ? safeHook("rules-injector", () =>
         createRulesInjectorHook(ctx, modelCacheState, {
           skipClaudeUserRules,
-        }))
-    : null
+        }),
+      )
+    : null;
 
   const tasksTodowriteDisabler = isHookEnabled("tasks-todowrite-disabler")
-    ? safeHook("tasks-todowrite-disabler", () =>
-        createTasksTodowriteDisablerHook({ experimental: pluginConfig.experimental }))
-    : null
+    ? safeHook("tasks-todowrite-disabler", () => createTasksTodowriteDisablerHook({ experimental: pluginConfig.experimental }))
+    : null;
 
   const writeExistingFileGuard = isHookEnabled("write-existing-file-guard")
     ? safeHook("write-existing-file-guard", () => createWriteExistingFileGuardHook(ctx))
-    : null
+    : null;
 
-  const bashFileReadGuard = isHookEnabled("bash-file-read-guard")
-    ? safeHook("bash-file-read-guard", () => createBashFileReadGuardHook())
-    : null
+  const bashFileReadGuard = isHookEnabled("bash-file-read-guard") ? safeHook("bash-file-read-guard", () => createBashFileReadGuardHook()) : null;
 
   const hashlineReadEnhancer = isHookEnabled("hashline-read-enhancer")
-    ? safeHook("hashline-read-enhancer", () => createHashlineReadEnhancerHook(ctx, { hashline_edit: { enabled: pluginConfig.hashline_edit ?? false } }))
-    : null
+    ? safeHook("hashline-read-enhancer", () =>
+        createHashlineReadEnhancerHook(ctx, { hashline_edit: { enabled: pluginConfig.hashline_edit ?? false } }),
+      )
+    : null;
 
-  const jsonErrorRecovery = isHookEnabled("json-error-recovery")
-    ? safeHook("json-error-recovery", () => createJsonErrorRecoveryHook(ctx))
-    : null
+  const jsonErrorRecovery = isHookEnabled("json-error-recovery") ? safeHook("json-error-recovery", () => createJsonErrorRecoveryHook(ctx)) : null;
 
-  const readImageResizer = isHookEnabled("read-image-resizer")
-    ? safeHook("read-image-resizer", () => createReadImageResizerHook(ctx))
-    : null
+  const readImageResizer = isHookEnabled("read-image-resizer") ? safeHook("read-image-resizer", () => createReadImageResizerHook(ctx)) : null;
 
   const todoDescriptionOverride = isHookEnabled("todo-description-override")
     ? safeHook("todo-description-override", () => createTodoDescriptionOverrideHook())
-    : null
+    : null;
 
   const webfetchRedirectGuard = isHookEnabled("webfetch-redirect-guard")
     ? safeHook("webfetch-redirect-guard", () => createWebFetchRedirectGuardHook(ctx))
-    : null
+    : null;
+
+  const websearchLocalRedirect = isHookEnabled("websearch-local-redirect")
+    ? safeHook("websearch-local-redirect", () => createWebsearchLocalRedirectHook(ctx, pluginConfig))
+    : null;
 
   const teamToolGating = isHookEnabled("team-tool-gating")
     ? safeHook("team-tool-gating", () => createTeamToolGating(ctx, pluginConfig.team_mode))
-    : null
+    : null;
 
-  const fsyncSkipWarning = isHookEnabled("fsync-skip-warning")
-    ? safeHook("fsync-skip-warning", () => createFsyncSkipWarningHook())
-    : null
+  const fsyncSkipWarning = isHookEnabled("fsync-skip-warning") ? safeHook("fsync-skip-warning", () => createFsyncSkipWarningHook()) : null;
 
   const planFormatValidator = isHookEnabled("plan-format-validator")
     ? safeHook("plan-format-validator", () => createPlanFormatValidatorHook(ctx))
-    : null
+    : null;
 
-  const notepadWriteGuard = isHookEnabled("notepad-write-guard")
-    ? safeHook("notepad-write-guard", () => createNotepadWriteGuardHook())
-    : null
+  const notepadWriteGuard = isHookEnabled("notepad-write-guard") ? safeHook("notepad-write-guard", () => createNotepadWriteGuardHook()) : null;
 
   return {
     commentChecker,
@@ -172,9 +162,10 @@ export function createToolGuardHooks(args: {
     readImageResizer,
     todoDescriptionOverride,
     webfetchRedirectGuard,
+    websearchLocalRedirect,
     fsyncSkipWarning,
     teamToolGating,
     notepadWriteGuard,
     planFormatValidator,
-  }
+  };
 }

@@ -1,0 +1,152 @@
+{
+  "totalFragments": 8,
+  "decisions": [
+    {
+      "file": "bob/20260630-1100-decision.md",
+      "author": "bob",
+      "created": "2026-06-30T11:00",
+      "section": "arch"
+    }
+  ],
+  "needsVerification": [
+    {
+      "target": "gizmo",
+      "file": "bob/20260629-1000-gizmo-drift.md",
+      "refDate": "2026-06-29",
+      "state": "DRIFTED",
+      "type": "analysis",
+      "detail": "anchor drift (mismatch: src/sample.ts#L1-L3)"
+    },
+    {
+      "target": "doohickey",
+      "file": "carol/20250601-1000-doohickey.md",
+      "refDate": "2025-06-01T10:00",
+      "state": "STALE",
+      "type": "source",
+      "detail": "age > TTL (395d / 14d)"
+    }
+  ],
+  "lessons": [
+    {
+      "file": "alice/20260630-1000-lesson.md",
+      "author": "alice",
+      "created": "2026-06-30T10:00",
+      "section": "general"
+    }
+  ],
+  "generated": "2026-07-01T16:07:10",
+  "targets": {
+    "gizmo": {
+      "authors": [
+        "bob",
+        "alice"
+      ],
+      "fragments": [
+        {
+          "file": "bob/20260629-1000-gizmo-drift.md",
+          "author": "bob",
+          "action": "append",
+          "created": "2026-06-29T10:00",
+          "section": "internals"
+        },
+        {
+          "file": "alice/20260629-0900-gizmo-internals.md",
+          "author": "alice",
+          "action": "append",
+          "created": "2026-06-29T09:00",
+          "section": "internals"
+        }
+      ],
+      "hasConflicts": false,
+      "freshness": {
+        "drifted": 1,
+        "worst": "DRIFTED",
+        "stale": 0
+      },
+      "lastUpdated": "2026-06-29T10:00",
+      "fragmentCount": 2,
+      "hasSynthesis": false,
+      "type": "analysis"
+    },
+    "widget": {
+      "authors": [
+        "bob",
+        "alice"
+      ],
+      "fragments": [
+        {
+          "file": "bob/20260628-1100-widget-overview.md",
+          "author": "bob",
+          "action": "replace",
+          "created": "2026-06-28T11:00",
+          "section": "overview"
+        },
+        {
+          "file": "alice/20260628-1000-widget-overview.md",
+          "author": "alice",
+          "action": "replace",
+          "created": "2026-06-28T10:00",
+          "section": "overview"
+        }
+      ],
+      "hasConflicts": true,
+      "freshness": {
+        "drifted": 0,
+        "worst": "FRESH",
+        "stale": 0
+      },
+      "lastUpdated": "2026-06-28T11:00",
+      "fragmentCount": 2,
+      "hasSynthesis": false,
+      "type": "entity"
+    },
+    "gadget": {
+      "authors": [
+        "alice"
+      ],
+      "fragments": [
+        {
+          "file": "alice/20260115-1000-gadget.md",
+          "author": "alice",
+          "action": "replace",
+          "created": "2026-01-15T10:00",
+          "section": "overview"
+        }
+      ],
+      "hasConflicts": false,
+      "freshness": {
+        "drifted": 0,
+        "worst": "AGING",
+        "stale": 0
+      },
+      "lastUpdated": "2026-01-15T10:00",
+      "fragmentCount": 1,
+      "hasSynthesis": false,
+      "type": "concept"
+    },
+    "doohickey": {
+      "authors": [
+        "carol"
+      ],
+      "fragments": [
+        {
+          "file": "carol/20250601-1000-doohickey.md",
+          "author": "carol",
+          "action": "replace",
+          "created": "2025-06-01T10:00",
+          "section": "overview"
+        }
+      ],
+      "hasConflicts": false,
+      "freshness": {
+        "drifted": 0,
+        "worst": "STALE",
+        "stale": 1
+      },
+      "lastUpdated": "2025-06-01T10:00",
+      "fragmentCount": 1,
+      "hasSynthesis": false,
+      "type": "source"
+    }
+  }
+}

@@ -65,14 +65,14 @@ coherent understanding. This is real AI synthesis, not dumb concatenation.
 
 ### Zero-Conflict Guarantee
 
-| Content Type | Path | Conflict Risk |
-|---|---|---|
-| Knowledge fragments | `wiki/fragments/{user}/` | **Impossible** — per-user folders |
-| Operation logs | `wiki/log/{user}/` | **Impossible** — per-user folders |
-| Daily journals | `wiki/journal/{user}/` | **Impossible** — per-user folders |
-| Code-update reports | `raw/code-updates/{user}-*.md` | **Impossible** — per-user files |
-| Raw sources | `raw/` | **None** — immutable after add |
-| Compiled output | `wiki/.compiled/` | **None** — gitignored |
+| Content Type        | Path                           | Conflict Risk                     |
+| ------------------- | ------------------------------ | --------------------------------- |
+| Knowledge fragments | `wiki/fragments/{user}/`       | **Impossible** — per-user folders |
+| Operation logs      | `wiki/log/{user}/`             | **Impossible** — per-user folders |
+| Daily journals      | `wiki/journal/{user}/`         | **Impossible** — per-user folders |
+| Code-update reports | `raw/code-updates/{user}-*.md` | **Impossible** — per-user files   |
+| Raw sources         | `raw/`                         | **None** — immutable after add    |
+| Compiled output     | `wiki/.compiled/`              | **None** — gitignored             |
 
 ### Username Convention
 
@@ -90,32 +90,33 @@ If not configured, fall back to git: `git config user.name` → lowercase, no sp
 
 ## Architecture
 
-| Layer | Path | Owner | Rule |
-|---|---|---|---|
-| Schema | `SCHEMA.md` | Team | Operating manual, co-evolved via PRs |
-| Raw | `raw/` | Human | Immutable — LLM reads but NEVER modifies |
-| Fragments | `wiki/fragments/` | LLM(s) | Per-user folders, immutable after commit |
-| Logs/Journals | `wiki/log/`, `wiki/journal/` | LLM(s) | Per-user folders |
-| Compiled | `wiki/.compiled/` | LLM (local) | Gitignored, generated at session start |
-| Scripts | `scripts/` | Team | Automation helpers |
+| Layer         | Path                         | Owner       | Rule                                     |
+| ------------- | ---------------------------- | ----------- | ---------------------------------------- |
+| Schema        | `SCHEMA.md`                  | Team        | Operating manual, co-evolved via PRs     |
+| Raw           | `raw/`                       | Human       | Immutable — LLM reads but NEVER modifies |
+| Fragments     | `wiki/fragments/`            | LLM(s)      | Per-user folders, immutable after commit |
+| Logs/Journals | `wiki/log/`, `wiki/journal/` | LLM(s)      | Per-user folders                         |
+| Compiled      | `wiki/.compiled/`            | LLM (local) | Gitignored, generated at session start   |
+| Scripts       | `scripts/`                   | Team        | Automation helpers                       |
 
 ### Raw Sources (`raw/`)
 
 Human-curated, immutable once added. This is the source of truth.
 
-| Folder | Contents |
-|---|---|
-| `raw/requirements/` | Business requirement documents (BR*.md) |
-| `raw/design/` | Architecture & design decision documents |
-| `raw/sessions/` | Chat transcripts / session notes (dropped in by user) |
-| `raw/decisions/` | Meeting notes, client feedback, scope changes |
-| `raw/code-updates/` | Code change reports (per session/commit) |
-| `raw/analysis/` | Solution reports, security scans, performance analysis |
-| `raw/architecture/` | Solution structure snapshots, service inventory |
+| Folder              | Contents                                               |
+| ------------------- | ------------------------------------------------------ |
+| `raw/requirements/` | Business requirement documents (BR\*.md)               |
+| `raw/design/`       | Architecture & design decision documents               |
+| `raw/sessions/`     | Chat transcripts / session notes (dropped in by user)  |
+| `raw/decisions/`    | Meeting notes, client feedback, scope changes          |
+| `raw/code-updates/` | Code change reports (per session/commit)               |
+| `raw/analysis/`     | Solution reports, security scans, performance analysis |
+| `raw/architecture/` | Solution structure snapshots, service inventory        |
 
 ### Fragments (`wiki/fragments/{user}/`)
 
 LLM-generated atomic knowledge units. Each fragment is:
+
 - **Owned by one user** — written to `fragments/{user}/` only
 - **Immutable after commit** — to update knowledge, create a NEW fragment
 - **Self-describing** — YAML frontmatter declares type, target, action, provenance
@@ -136,6 +137,7 @@ wiki/fragments/{user}/{YYYYMMDD}-{HHMM}-{short-topic}.md
 ```
 
 Examples:
+
 - `wiki/fragments/fyang/20260614-0930-auth-token-config.md`
 - `wiki/fragments/jsmith/20260614-1445-cache-redis-setup.md`
 
@@ -144,38 +146,95 @@ Examples:
 ```yaml
 ---
 type: entity|concept|lesson|decision|source|analysis|overview|synthesis
-target: auth-service          # which compiled page this contributes to
-section: token-management     # optional: specific section within the target
+target: auth-service # which compiled page this contributes to
+section: token-management # optional: specific section within the target
 created: YYYY-MM-DDTHH:MM
-author: {username}
+author: { username }
 action: append|replace|correct
-sources: [raw/requirements/BR01.md]   # raw sources that inform this
+sources: [raw/requirements/BR01.md] # raw sources that inform this
 tags: [authentication, jwt]
-supersedes:                   # optional: fragment ID(s) this replaces
-synthesized-from:             # optional: for type=synthesis, list source fragments
+supersedes: # optional: fragment ID(s) this replaces
+synthesized-from: # optional: for type=synthesis, list source fragments
 ---
 ```
 
 ### Fragment Types
 
-| Type | Default Action | Purpose |
-|---|---|---|
-| `entity` | `replace` | State of a specific service/component |
-| `concept` | `replace` | Cross-cutting pattern or architectural concept |
-| `lesson` | `append` | Lesson learned — always accumulates, never overwrites |
-| `decision` | `append` | Design decision — history matters |
-| `source` | `replace` | Summary of an ingested raw document |
-| `analysis` | `append` | Investigation result, comparison, synthesis answer |
-| `overview` | `replace` | Project-level architectural state |
-| `synthesis` | `replace` | AI-produced synthesis of multiple fragments |
+| Type        | Default Action | Purpose                                               |
+| ----------- | -------------- | ----------------------------------------------------- |
+| `entity`    | `replace`      | State of a specific service/component                 |
+| `concept`   | `replace`      | Cross-cutting pattern or architectural concept        |
+| `lesson`    | `append`       | Lesson learned — always accumulates, never overwrites |
+| `decision`  | `append`       | Design decision — history matters                     |
+| `source`    | `replace`      | Summary of an ingested raw document                   |
+| `analysis`  | `append`       | Investigation result, comparison, synthesis answer    |
+| `overview`  | `replace`      | Project-level architectural state                     |
+| `synthesis` | `replace`      | AI-produced synthesis of multiple fragments           |
 
 ### Action Semantics
 
-| Action | Compilation Behavior |
-|---|---|
-| `append` | All fragments with same target+section coexist, sorted chronologically |
+| Action    | Compilation Behavior                                                                          |
+| --------- | --------------------------------------------------------------------------------------------- |
+| `append`  | All fragments with same target+section coexist, sorted chronologically                        |
 | `replace` | Latest fragment (by `created` timestamp) wins for same target+section; older shown in history |
-| `correct` | Explicitly marks older claims as wrong; shown as correction with explanation |
+| `correct` | Explicitly marks older claims as wrong; shown as correction with explanation                  |
+
+### Freshness Envelope (Optional)
+
+Fragments may carry an optional freshness envelope so tooling can flag stale or
+code-drifted knowledge. Every field is optional and additive — fragments without
+these fields still compile (they resolve to state `UNKNOWN`, trust `curated`).
+
+```yaml
+last_verified: 2026-07-01 # ISO date claim was last checked; falls back to `created`
+verified_commit: 11988a804 # short SHA verification was done at (provenance)
+trust: verified|curated|source|untrusted # default: curated
+ttl_days: 45 # override the per-type default TTL
+code_anchors: [path#L1-L20@1a2b3c4d] # single-line array binding the claim to code ranges
+```
+
+**State machine** (computed by `compile-wiki.ps1` and `search-wiki.ps1`):
+
+| State     | Rule                                                         |
+| --------- | ------------------------------------------------------------ |
+| `FRESH`   | `age ≤ ttl`                                                  |
+| `AGING`   | `ttl < age ≤ 3×ttl`                                          |
+| `STALE`   | `age > 3×ttl`                                                |
+| `DRIFTED` | any `code_anchor` hash ≠ its recomputed hash (overrides age) |
+| `UNKNOWN` | no parseable date                                            |
+
+Age is measured from `last_verified` (or `created`). Severity rank for
+aggregation: `DRIFTED` 4 > `STALE` 3 > `UNKNOWN` 2 > `AGING` 1 > `FRESH` 0.
+
+**Per-type TTL defaults (days):** lesson 180, decision 365, entity 30,
+concept 90, source 14, analysis 60, overview 120, synthesis 60.
+
+**Anchor hash algorithm:** first 8 lowercase hex of SHA256 over the inclusive
+1-indexed line range, each line `TrimEnd`'d, joined with LF, encoded UTF8.
+Language-agnostic and intentionally distinct from hashline-core's xxHash so the
+PowerShell tooling and any future TS verifier agree byte-for-byte. `code_anchors`
+may be written single-line (`[a, b]`) or multiline; the frontmatter parser
+merges continuation lines before parsing, so markdown formatters that reflow the
+array across lines no longer break drift tracking. Anchor entries must contain
+no commas. Stamp a hash with:
+
+```powershell
+& ".\Second_Brain\scripts\anchor-hash.ps1" "packages/omo-opencode/src/index.ts#L1-L20"
+```
+
+**How tooling consumes it:**
+
+- `compile-wiki.ps1` computes per-fragment state, aggregates the worst state per
+  target into the `index.md` Freshness column and `_manifest.json`, and emits a
+  `## Needs Verification` section plus `needsVerification[]` for STALE/DRIFTED
+  fragments.
+- `search-wiki.ps1` multiplies relevance by a freshness factor (FRESH 1.0 →
+  DRIFTED 0.3) and a trust factor (verified 1.2 → untrusted 0.3), and adds a
+  State badge column so fresh, trusted knowledge outranks stale hits.
+
+**When to re-verify:** a fragment in `## Needs Verification` should be checked
+against current code, then refreshed by writing a new fragment (`action: correct`
+or `replace`) with an updated `last_verified` and re-stamped `code_anchors`.
 
 ---
 
@@ -217,6 +276,7 @@ When the LLM needs information about a topic (e.g., "auth-service"):
 ### When to Write Synthesis Fragments
 
 Write a `type: synthesis` fragment when:
+
 - Many (5+) fragments exist for one target, making raw reading expensive
 - Cross-cutting analysis connects knowledge from multiple targets
 - A new team member would benefit from a pre-built summary
@@ -238,7 +298,6 @@ synthesized-from:
   - fyang/20260601-0800-auth-initial.md
 tags: [entity, authentication, synthesis]
 ---
-
 # Auth Service — Synthesized State
 
 [AI-written coherent narrative incorporating all source fragments...]
@@ -248,16 +307,17 @@ tags: [entity, authentication, synthesis]
 
 When the LLM reads multiple fragments for a target and must determine current truth:
 
-| Priority | Rule | Rationale |
-|---|---|---|
-| 1st | `action: correct` fragments | Explicit correction always wins |
-| 2nd | Latest `action: replace` by timestamp | Newest state supersedes older |
-| 3rd | Fragments citing `sources: [raw/...]` | Backed by source documents = higher confidence |
-| 4th | Fragments matching recent `raw/code-updates/` | Cross-referenced with actual code changes |
-| 5th | Older `replace` fragments | Historical context only, not current truth |
+| Priority | Rule                                          | Rationale                                      |
+| -------- | --------------------------------------------- | ---------------------------------------------- |
+| 1st      | `action: correct` fragments                   | Explicit correction always wins                |
+| 2nd      | Latest `action: replace` by timestamp         | Newest state supersedes older                  |
+| 3rd      | Fragments citing `sources: [raw/...]`         | Backed by source documents = higher confidence |
+| 4th      | Fragments matching recent `raw/code-updates/` | Cross-referenced with actual code changes      |
+| 5th      | Older `replace` fragments                     | Historical context only, not current truth     |
 
 **Conflict detection:** When two `replace` fragments for the same target+section exist
 from different authors within the same day, the LLM:
+
 1. Uses latest timestamp as default truth
 2. Checks source citations — cited source > uncited
 3. Cross-references with `raw/code-updates/` for verification
@@ -287,6 +347,7 @@ and commits it, ALL other developers get it on `git pull`. Their LLMs read the
 committed synthesis directly — no need to re-derive independently.
 
 This means:
+
 - Synthesis work happens **once**, reused by the entire team
 - New team members get instant context from existing synthesis fragments
 - Incremental updates are cheap (read synthesis + 1-2 new fragments)
@@ -306,12 +367,15 @@ This is part of task completion, not a separate request.**
    ## [HH:MM] Task Description
 
    ### Files Modified
+
    - path/to/file.cs — reason for change
 
    ### Decisions
+
    - What was chosen and why
 
    ### DevOps
+
    - Task #ID (if mentioned)
    ```
 
@@ -343,7 +407,7 @@ When user adds a new raw source:
 3. **CREATE** `wiki/fragments/{user}/{timestamp}-source-{slug}.md`:
    ```yaml
    type: source
-   target: {slug}
+   target: { slug }
    action: replace
    sources: [raw/path/to/file.md]
    ```
@@ -503,16 +567,14 @@ When two `replace` fragments target the same section within a short time window
   "target": "auth-service",
   "section": "token-management",
   "hasConflicts": true,
-  "conflictingFragments": [
-    "fyang/20260614-1430-auth-token.md",
-    "jsmith/20260614-1445-auth-token.md"
-  ]
+  "conflictingFragments": ["fyang/20260614-1430-auth-token.md", "jsmith/20260614-1445-auth-token.md"]
 }
 ```
 
 ### Resolution (by the LLM at read-time)
 
 The LLM sees the conflict flag and:
+
 1. Reads both fragments
 2. Cross-references with raw sources and actual code
 3. Determines which is correct
@@ -522,6 +584,7 @@ The LLM sees the conflict flag and:
 ### Human Resolution (if AI can't determine)
 
 If the LLM cannot resolve (both fragments cite different valid sources):
+
 - Flags to developer: "Conflicting fragments — please clarify"
 - The developer tells the LLM which is correct
 - LLM writes the `correct` fragment
@@ -532,11 +595,11 @@ If the LLM cannot resolve (both fragments cite different valid sources):
 
 The manifest-based approach works well up to ~500 fragments. Beyond that:
 
-| Fragment Count | Strategy |
-|---|---|
-| < 200 | Manifest + direct fragment reading |
-| 200–1000 | Synthesis fragments reduce read load; search-wiki.ps1 for discovery |
-| 1000+ | Dedicated search tool (qmd, MCP search server, or similar) |
+| Fragment Count | Strategy                                                            |
+| -------------- | ------------------------------------------------------------------- |
+| < 200          | Manifest + direct fragment reading                                  |
+| 200–1000       | Synthesis fragments reduce read load; search-wiki.ps1 for discovery |
+| 1000+          | Dedicated search tool (qmd, MCP search server, or similar)          |
 
 Synthesis fragments are the natural scaling mechanism — they pre-compile AI understanding
 so future sessions don't need to re-read hundreds of raw fragments.
@@ -556,6 +619,7 @@ so future sessions don't need to re-read hundreds of raw fragments.
 ### Tags
 
 Freeform tags in frontmatter for categorization:
+
 - Service/component names: `authentication`, `notification-service`
 - Technical areas: `jwt`, `redis`, `api-gateway`
 - Categories: `security`, `performance`, `architecture`
