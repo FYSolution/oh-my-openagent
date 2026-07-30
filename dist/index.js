@@ -72187,12 +72187,10 @@ var TOKEN_LIMIT_FALLBACK_PATTERNS = [
   "context_length_exceeded",
   "token limit",
   "context length",
-  "too many tokens"
+  "too many tokens",
+  "maximum allowed length"
 ];
-var TOKEN_LIMIT_ERROR_NAMES = new Set([
-  "contextlengtherror",
-  "context_length_exceeded"
-]);
+var TOKEN_LIMIT_ERROR_NAMES = new Set(["contextlengtherror", "context_length_exceeded"]);
 function isTokenLimitError(error) {
   if (!error)
     return false;
@@ -75530,7 +75528,8 @@ var TOKEN_LIMIT_PATTERNS = [
   /prompt.*?(\d+).*?tokens.*?exceeds.*?(\d+)/i,
   /(\d+).*?tokens.*?limit.*?(\d+)/i,
   /context.*?length.*?(\d+).*?maximum.*?(\d+)/i,
-  /max.*?context.*?(\d+).*?but.*?(\d+)/i
+  /max.*?context.*?(\d+).*?but.*?(\d+)/i,
+  /input length.*?(\d+).*?tokens.*?exceeds.*?maximum.*?(\d+)/i
 ];
 var TOKEN_LIMIT_KEYWORDS = [
   "prompt is too long",
@@ -75540,7 +75539,8 @@ var TOKEN_LIMIT_KEYWORDS = [
   "token limit",
   "context length",
   "too many tokens",
-  "non-empty content"
+  "non-empty content",
+  "maximum allowed length"
 ];
 var THINKING_BLOCK_ERROR_PATTERNS = [
   /thinking.*first block/i,
