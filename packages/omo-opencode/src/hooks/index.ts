@@ -46,6 +46,7 @@ export { createNoHephaestusNonGptHook } from "./no-hephaestus-non-gpt";
 export { createHephaestusAgentsMdInjectorHook } from "./hephaestus-agents-md-injector";
 export { createAutoSlashCommandHook } from "./auto-slash-command";
 export { createEditErrorRecoveryHook } from "./edit-error-recovery";
+export { createEditLoopBreakerHook } from "./edit-loop-breaker";
 
 export { createPrometheusMdOnlyHook } from "./prometheus-md-only";
 export { createSisyphusJuniorNotepadHook } from "./sisyphus-junior-notepad";

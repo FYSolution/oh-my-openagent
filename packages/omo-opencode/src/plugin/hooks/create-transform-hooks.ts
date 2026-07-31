@@ -5,6 +5,7 @@ import type { RalphLoopHook } from "../../hooks/ralph-loop";
 
 import {
   createClaudeCodeHooksHook,
+  createEditLoopBreakerHook,
   createKeywordDetectorHook,
   createMonitorStatusInjectorHook,
   createSecondBrainInjectorHook,
@@ -24,6 +25,7 @@ export type TransformHooks = {
   teamMailboxInjector: ReturnType<typeof createTeamMailboxInjector> | null;
   toolPairValidator: ReturnType<typeof createToolPairValidatorHook> | null;
   monitorStatusInjector: ReturnType<typeof createMonitorStatusInjectorHook> | null;
+  editLoopBreaker: ReturnType<typeof createEditLoopBreakerHook> | null;
 };
 
 export function createTransformHooks(args: {
@@ -95,6 +97,10 @@ export function createTransformHooks(args: {
         })
       : null;
 
+  const editLoopBreaker = isHookEnabled("edit-loop-breaker")
+    ? safeCreateHook("edit-loop-breaker", () => createEditLoopBreakerHook({ enabled: true }), { enabled: safeHookEnabled })
+    : null;
+
   return {
     claudeCodeHooks,
     keywordDetector,
@@ -104,5 +110,6 @@ export function createTransformHooks(args: {
     teamMailboxInjector,
     toolPairValidator,
     monitorStatusInjector,
+    editLoopBreaker,
   };
 }

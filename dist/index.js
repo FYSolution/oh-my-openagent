@@ -97825,6 +97825,116 @@ ${reminder}`;
     }
   };
 }
+// packages/omo-opencode/src/hooks/edit-loop-breaker/hook.ts
+var EDIT_LOOP_THRESHOLD = 2;
+var EDIT_LOOP_HARD_THRESHOLD = 4;
+var EDIT_LOOP_MARKER = "[EDIT TOOL REPEATEDLY REJECTED";
+var EDIT_LOOP_GUIDANCE = `${EDIT_LOOP_MARKER} - FIX ARGUMENTS OR CHANGE APPROACH]
+
+Your recent edit calls were rejected before running because the arguments did not match the schema (for example a missing "filePath"). Retrying the same shape will keep failing. Do ONE of these NOW:
+
+1. Re-issue the edit with the REQUIRED "filePath" key set to the absolute file path, plus a non-empty "edits" array.
+2. If edits keep being rejected, use the write tool to replace the ENTIRE file with the corrected content.
+3. If the change is large or the file is unfamiliar, delegate the task to a subagent via the task tool.
+
+Do NOT repeat the same rejected edit call.`;
+var EDIT_LOOP_GUIDANCE_HARD = `${EDIT_LOOP_MARKER} - STOP USING THE EDIT TOOL]
+
+You have called the edit tool many times and every call was rejected before it ran. The edit tool is NOT working for this task. Do NOT call the edit tool again - retrying it will keep failing.
+
+You MUST switch approach right now. Pick ONE and do it immediately:
+- Use the write tool to write the ENTIRE corrected file contents in a single call.
+- Or delegate this exact task to a subagent with the task tool and let it apply the change.
+
+Calling edit again is forbidden. Respond by calling write or task now - do not just say you will.`;
+var SCHEMA_REJECTION_SIGNATURES = ["edit tool was called with invalid arguments", "invalid arguments", "schemaerror", "missing key"];
+function collectPartText(part) {
+  const segments = [];
+  if (typeof part.text === "string")
+    segments.push(part.text);
+  if (typeof part.state?.error === "string")
+    segments.push(part.state.error);
+  if (typeof part.state?.output === "string")
+    segments.push(part.state.output);
+  return segments.join(`
+`).toLowerCase();
+}
+function classifyEditPart(part) {
+  if (part.type === "tool" && part.tool === "edit" && part.state?.status === "completed") {
+    return "success";
+  }
+  const text = collectPartText(part);
+  if (text.length === 0)
+    return "none";
+  if (SCHEMA_REJECTION_SIGNATURES.some((signature) => text.includes(signature))) {
+    return "error";
+  }
+  return "none";
+}
+function messageHasMarker(message) {
+  return message.parts.some((part) => part.synthetic === true && typeof part.text === "string" && part.text.includes(EDIT_LOOP_MARKER));
+}
+function isRealUserMessage2(message) {
+  return message.info.role === "user" && message.parts.some((part) => part.synthetic !== true);
+}
+function findLastRealUserIndex(messages) {
+  for (let index = messages.length - 1;index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && isRealUserMessage2(message))
+      return index;
+  }
+  return 0;
+}
+function resolveSessionID3(input, messages) {
+  if (typeof input.sessionID === "string" && input.sessionID.length > 0) {
+    return input.sessionID;
+  }
+  for (let index = messages.length - 1;index >= 0; index -= 1) {
+    const sessionID = messages[index]?.info.sessionID;
+    if (typeof sessionID === "string" && sessionID.length > 0)
+      return sessionID;
+  }
+  return;
+}
+function createGuidanceMessage(sessionID, guidance) {
+  return {
+    info: { role: "user", sessionID },
+    parts: [{ type: "text", text: guidance, synthetic: true }]
+  };
+}
+function createEditLoopBreakerHook(config) {
+  return {
+    "experimental.chat.messages.transform": async (input, output) => {
+      if (!config.enabled)
+        return;
+      const messages = output.messages;
+      if (messages.length === 0)
+        return;
+      const lastMessage = messages.at(-1);
+      if (lastMessage && messageHasMarker(lastMessage))
+        return;
+      const startIndex = findLastRealUserIndex(messages);
+      let errorStreak = 0;
+      let lastEditClass;
+      for (let index = startIndex;index < messages.length; index += 1) {
+        for (const part of messages[index]?.parts ?? []) {
+          const classification = classifyEditPart(part);
+          if (classification === "error") {
+            errorStreak += 1;
+            lastEditClass = "error";
+          } else if (classification === "success") {
+            errorStreak = 0;
+            lastEditClass = "success";
+          }
+        }
+      }
+      if (errorStreak >= EDIT_LOOP_THRESHOLD && lastEditClass === "error") {
+        const guidance = errorStreak >= EDIT_LOOP_HARD_THRESHOLD ? EDIT_LOOP_GUIDANCE_HARD : EDIT_LOOP_GUIDANCE;
+        messages.push(createGuidanceMessage(resolveSessionID3(input, messages), guidance));
+      }
+    }
+  };
+}
 // packages/omo-opencode/src/hooks/prometheus-md-only/constants.ts
 var HOOK_NAME4 = "prometheus-md-only";
 var PROMETHEUS_AGENT = "prometheus";
@@ -102224,7 +102334,7 @@ function clearSessionModel(sessionID) {
 function isCompactionAgent3(agent) {
   return agent?.trim().toLowerCase() === "compaction";
 }
-function resolveSessionID3(props) {
+function resolveSessionID4(props) {
   return resolveSessionEventID(props);
 }
 
@@ -102582,7 +102692,7 @@ ${history}
   const event = async ({ event: event2 }) => {
     const props = event2.properties;
     if (event2.type === "session.deleted") {
-      const sessionID = resolveSessionID3(props);
+      const sessionID = resolveSessionID4(props);
       if (sessionID) {
         clearCompactionAgentConfigCheckpoint(sessionID);
         tailStates.delete(sessionID);
@@ -102590,7 +102700,7 @@ ${history}
       return;
     }
     if (event2.type === "session.idle") {
-      const sessionID = resolveSessionID3(props);
+      const sessionID = resolveSessionID4(props);
       if (!sessionID) {
         return;
       }
@@ -102601,7 +102711,7 @@ ${history}
       return;
     }
     if (event2.type === "session.compacted") {
-      const sessionID = resolveSessionID3(props);
+      const sessionID = resolveSessionID4(props);
       if (!sessionID) {
         return;
       }
@@ -102720,7 +102830,7 @@ async function resolveTodoWriter() {
   }
   return null;
 }
-function resolveSessionID4(props) {
+function resolveSessionID5(props) {
   return resolveSessionEventID(props);
 }
 function createCompactionTodoPreserverHook(ctx) {
@@ -102790,7 +102900,7 @@ function createCompactionTodoPreserverHook(ctx) {
   const event = async ({ event: event2 }) => {
     const props = event2.properties;
     if (event2.type === "session.deleted") {
-      const sessionID = resolveSessionID4(props);
+      const sessionID = resolveSessionID5(props);
       if (sessionID) {
         snapshots.delete(sessionID);
         protectedSnapshots.delete(sessionID);
@@ -102798,7 +102908,7 @@ function createCompactionTodoPreserverHook(ctx) {
       return;
     }
     if (event2.type === "session.idle") {
-      const sessionID = resolveSessionID4(props);
+      const sessionID = resolveSessionID5(props);
       if (sessionID) {
         snapshots.delete(sessionID);
         protectedSnapshots.delete(sessionID);
@@ -102806,7 +102916,7 @@ function createCompactionTodoPreserverHook(ctx) {
       return;
     }
     if (event2.type === "session.compacted") {
-      const sessionID = resolveSessionID4(props);
+      const sessionID = resolveSessionID5(props);
       if (sessionID) {
         await restore(sessionID);
       }
@@ -108588,7 +108698,7 @@ function createPlanFormatValidatorHook(_ctx) {
 }
 // packages/omo-opencode/src/hooks/monitor-status-injector/hook.ts
 var MONITOR_STATUS_PREFIX = "Active monitors:";
-function resolveSessionID5(input, messages) {
+function resolveSessionID6(input, messages) {
   if (typeof input.sessionID === "string" && input.sessionID.length > 0) {
     return input.sessionID;
   }
@@ -108642,7 +108752,7 @@ function createMonitorStatusInjectorHook(monitorManager, config) {
       if (!config.enabled || output.messages.length === 0) {
         return;
       }
-      const sessionID = resolveSessionID5(input, output.messages);
+      const sessionID = resolveSessionID6(input, output.messages);
       if (sessionID === undefined) {
         return;
       }
@@ -120666,6 +120776,7 @@ function createTransformHooks(args) {
   const monitorStatusInjector = monitorConfig?.enabled && monitorManager && isHookEnabled("monitor-status-injector") ? safeCreateHook("monitor-status-injector", () => createMonitorStatusInjectorHook(monitorManager, { enabled: monitorConfig.enabled }), {
     enabled: safeHookEnabled
   }) : null;
+  const editLoopBreaker = isHookEnabled("edit-loop-breaker") ? safeCreateHook("edit-loop-breaker", () => createEditLoopBreakerHook({ enabled: true }), { enabled: safeHookEnabled }) : null;
   return {
     claudeCodeHooks,
     keywordDetector,
@@ -120674,7 +120785,8 @@ function createTransformHooks(args) {
     teamModeStatusInjector,
     teamMailboxInjector,
     toolPairValidator,
-    monitorStatusInjector
+    monitorStatusInjector,
+    editLoopBreaker
   };
 }
 
@@ -150819,17 +150931,14 @@ var ASSISTANT_PREFILL_UNSUPPORTED_PROVIDERS = new Set([
   "opencode-zen-proxy",
   "vercel"
 ]);
-var ASSISTANT_PREFILL_UNSUPPORTED_MODEL_PREFIXES = [
-  "claude-opus-4",
-  "claude-sonnet-4-6",
-  "claude-mythos"
-];
+var ASSISTANT_PREFILL_UNSUPPORTED_MODEL_PREFIXES = ["claude-opus-4", "claude-sonnet-4-6", "claude-mythos"];
 var MESSAGES_TRANSFORM_HOOKS = [
   { key: "contextInjectorMessagesTransform", name: "contextInjectorMessagesTransform" },
   { key: "teamModeStatusInjector", name: "teamModeStatusInjector" },
   { key: "teamMailboxInjector", name: "teamMailboxInjector" },
   { key: "toolPairValidator", name: "toolPairValidator" },
-  { key: "monitorStatusInjector", name: "monitorStatusInjector" }
+  { key: "monitorStatusInjector", name: "monitorStatusInjector" },
+  { key: "editLoopBreaker", name: "editLoopBreaker" }
 ];
 function getSessionID2(message) {
   return message.info.sessionID;
@@ -153205,6 +153314,7 @@ var HookNameSchema = z30.enum([
   "claude-code-hooks",
   "auto-slash-command",
   "edit-error-recovery",
+  "edit-loop-breaker",
   "json-error-recovery",
   "delegate-task-retry",
   "prometheus-md-only",
