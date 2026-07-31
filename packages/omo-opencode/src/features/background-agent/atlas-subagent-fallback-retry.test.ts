@@ -1,106 +1,105 @@
 /// <reference types="bun-types" />
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import type { PluginInput } from "@opencode-ai/plugin"
-import { _resetMemCacheForTesting as resetConnectedProvidersCacheForTesting } from "../../shared/connected-providers-cache"
-import { releaseAllPromptAsyncReservationsForTesting } from "../../shared/prompt-async-gate"
-import {
-  getSessionAgent,
-  _resetForTesting as resetClaudeCodeSessionState,
-  subagentSessions,
-} from "../claude-code-session-state"
-import { BackgroundManager } from "./manager"
-import { clearBackgroundTaskRegistryForTesting } from "./task-registry"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { PluginInput } from "@opencode-ai/plugin";
+import { _resetMemCacheForTesting as resetConnectedProvidersCacheForTesting } from "../../shared/connected-providers-cache";
+import { releaseAllPromptAsyncReservationsForTesting } from "../../shared/prompt-async-gate";
+import { getSessionAgent, _resetForTesting as resetClaudeCodeSessionState, subagentSessions } from "../claude-code-session-state";
+import { BackgroundManager } from "./manager";
+import { clearBackgroundTaskRegistryForTesting } from "./task-registry";
 
-type SessionGetArgs = { readonly path: { readonly id: string } }
+type SessionGetArgs = { readonly path: { readonly id: string } };
 type SessionCreateArgs = {
   readonly body?: {
-    readonly parentID?: string
-    readonly model?: { readonly providerID?: string; readonly id?: string; readonly variant?: string }
-  }
-}
-type PromptCall = { readonly path: { readonly id: string }; readonly body?: unknown }
+    readonly parentID?: string;
+    readonly model?: { readonly providerID?: string; readonly id?: string; readonly variant?: string };
+  };
+};
+type PromptCall = { readonly path: { readonly id: string }; readonly body?: unknown };
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME
-const testDirectory = "/tmp/omo-atlas-fallback-test"
-let cacheCounter = 0
+const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const testDirectory = "/tmp/omo-atlas-fallback-test";
+let cacheCounter = 0;
 
 beforeEach(() => {
-  process.env.XDG_CACHE_HOME = `${testDirectory}/cache-${cacheCounter}`
-  cacheCounter += 1
-  resetConnectedProvidersCacheForTesting()
-  resetClaudeCodeSessionState()
-})
+  process.env.XDG_CACHE_HOME = `${testDirectory}/cache-${cacheCounter}`;
+  cacheCounter += 1;
+  resetConnectedProvidersCacheForTesting();
+  resetClaudeCodeSessionState();
+});
 
 afterEach(() => {
   if (originalXdgCacheHome === undefined) {
-    delete process.env.XDG_CACHE_HOME
+    delete process.env.XDG_CACHE_HOME;
   } else {
-    process.env.XDG_CACHE_HOME = originalXdgCacheHome
+    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   }
-  resetConnectedProvidersCacheForTesting()
-  resetClaudeCodeSessionState()
-  clearBackgroundTaskRegistryForTesting()
-  releaseAllPromptAsyncReservationsForTesting()
-})
+  resetConnectedProvidersCacheForTesting();
+  resetClaudeCodeSessionState();
+  clearBackgroundTaskRegistryForTesting();
+  releaseAllPromptAsyncReservationsForTesting();
+});
 
 function createPluginInput(client: unknown, directory: string): PluginInput {
-  return { client, directory } as PluginInput
+  return { client, directory } as PluginInput;
 }
 
 async function flushAsyncWork(cycles = 30): Promise<void> {
   for (let index = 0; index < cycles; index++) {
-    await Promise.resolve()
+    await Promise.resolve();
   }
 }
 
-function createAtlasHarness(): {
-  readonly manager: BackgroundManager
-  readonly createdSessions: Array<{ readonly id: string; readonly body: SessionCreateArgs["body"] }>
-  readonly promptCalls: PromptCall[]
-  readonly markSessionMissing: (sessionID: string) => void
+function createAtlasHarness(options?: { readonly disableModelFallback?: boolean }): {
+  readonly manager: BackgroundManager;
+  readonly createdSessions: Array<{ readonly id: string; readonly body: SessionCreateArgs["body"] }>;
+  readonly promptCalls: PromptCall[];
+  readonly markSessionMissing: (sessionID: string) => void;
 } {
-  const directory = testDirectory
-  const sessionAlive = new Map<string, boolean>([["atlas-parent", true]])
-  const createdSessions: Array<{ readonly id: string; readonly body: SessionCreateArgs["body"] }> = []
-  const promptCalls: PromptCall[] = []
-  const sessionIDs = ["ses_primary", "ses_fallback"]
+  const directory = testDirectory;
+  const sessionAlive = new Map<string, boolean>([["atlas-parent", true]]);
+  const createdSessions: Array<{ readonly id: string; readonly body: SessionCreateArgs["body"] }> = [];
+  const promptCalls: PromptCall[] = [];
+  const sessionIDs = ["ses_primary", "ses_fallback"];
 
   const client = {
     session: {
       get: async ({ path }: SessionGetArgs) => {
         if (path.id === "atlas-parent") {
-          return { data: { id: path.id, directory, parentID: undefined } }
+          return { data: { id: path.id, directory, parentID: undefined } };
         }
         if (sessionAlive.get(path.id)) {
-          return { data: { id: path.id, directory, parentID: "atlas-parent" } }
+          return { data: { id: path.id, directory, parentID: "atlas-parent" } };
         }
-        return { error: { status: 404, message: `session ${path.id} not found` } }
+        return { error: { status: 404, message: `session ${path.id} not found` } };
       },
       create: async (args: SessionCreateArgs) => {
-        const id = sessionIDs[createdSessions.length] ?? `ses_extra_${createdSessions.length}`
-        createdSessions.push({ id, body: args.body })
-        sessionAlive.set(id, true)
-        return { data: { id } }
+        const id = sessionIDs[createdSessions.length] ?? `ses_extra_${createdSessions.length}`;
+        createdSessions.push({ id, body: args.body });
+        sessionAlive.set(id, true);
+        return { data: { id } };
       },
       promptAsync: async (args: PromptCall) => {
-        promptCalls.push(args)
-        return {}
+        promptCalls.push(args);
+        return {};
       },
       abort: async ({ path }: SessionGetArgs) => {
-        sessionAlive.set(path.id, false)
-        return {}
+        sessionAlive.set(path.id, false);
+        return {};
       },
     },
-  }
-  const manager = new BackgroundManager({ pluginContext: createPluginInput(client, directory) })
+  };
+  const manager = new BackgroundManager({
+    pluginContext: createPluginInput(client, directory),
+    disableModelFallback: options?.disableModelFallback,
+  });
 
   return {
     manager,
     createdSessions,
     promptCalls,
     markSessionMissing: (sessionID: string) => sessionAlive.set(sessionID, false),
-  }
+  };
 }
 
 async function launchAtlasOracleSubagent(manager: BackgroundManager): Promise<string> {
@@ -112,12 +111,10 @@ async function launchAtlasOracleSubagent(manager: BackgroundManager): Promise<st
     parentMessageId: "atlas-message",
     parentAgent: "atlas",
     model: { providerID: "openai", modelID: "gpt-5.5", variant: "high" },
-    fallbackChain: [
-      { providers: ["github-copilot"], model: "claude-sonnet-4.6", variant: "high" },
-    ],
-  })
-  await flushAsyncWork()
-  return task.id
+    fallbackChain: [{ providers: ["github-copilot"], model: "claude-sonnet-4.6", variant: "high" }],
+  });
+  await flushAsyncWork();
+  return task.id;
 }
 
 function emitUsageLimitError(manager: BackgroundManager, sessionID: string): void {
@@ -135,40 +132,59 @@ function emitUsageLimitError(manager: BackgroundManager, sessionID: string): voi
         },
       },
     },
-  })
+  });
 }
 
 describe("Atlas-spawned subagent runtime fallback", () => {
   test("retries oracle subagent on OpenAI usage_limit_reached and registers the fallback session", async () => {
     //#given
-    const { manager, createdSessions, promptCalls } = createAtlasHarness()
-    const taskID = await launchAtlasOracleSubagent(manager)
+    const { manager, createdSessions, promptCalls } = createAtlasHarness();
+    const taskID = await launchAtlasOracleSubagent(manager);
 
     //#when
-    emitUsageLimitError(manager, "ses_primary")
-    await flushAsyncWork(60)
+    emitUsageLimitError(manager, "ses_primary");
+    await flushAsyncWork(60);
 
     //#then
-    const task = manager.getTask(taskID)
-    expect(task?.status).toBe("running")
-    expect(task?.sessionId).toBe("ses_fallback")
-    expect(task?.model).toEqual({ providerID: "github-copilot", modelID: "claude-sonnet-4.6", variant: "high" })
-    expect(task?.attemptCount).toBe(1)
-    expect(createdSessions).toHaveLength(2)
-    expect(createdSessions[1]?.body?.model).toEqual({ providerID: "github-copilot", id: "claude-sonnet-4.6", variant: "high" })
-    expect(promptCalls).toHaveLength(2)
-    expect(subagentSessions.has("ses_primary")).toBe(false)
-    expect(subagentSessions.has("ses_fallback")).toBe(true)
-    expect(getSessionAgent("ses_fallback")).toBe("oracle")
+    const task = manager.getTask(taskID);
+    expect(task?.status).toBe("running");
+    expect(task?.sessionId).toBe("ses_fallback");
+    expect(task?.model).toEqual({ providerID: "github-copilot", modelID: "claude-sonnet-4.6", variant: "high" });
+    expect(task?.attemptCount).toBe(1);
+    expect(createdSessions).toHaveLength(2);
+    expect(createdSessions[1]?.body?.model).toEqual({ providerID: "github-copilot", id: "claude-sonnet-4.6", variant: "high" });
+    expect(promptCalls).toHaveLength(2);
+    expect(subagentSessions.has("ses_primary")).toBe(false);
+    expect(subagentSessions.has("ses_fallback")).toBe(true);
+    expect(getSessionAgent("ses_fallback")).toBe("oracle");
 
-    manager.shutdown()
-  })
+    manager.shutdown();
+  });
+
+  test("does not fall back when model_fallback is explicitly disabled", async () => {
+    //#given a manager with background model fallback disabled (user set model_fallback: false)
+    const { manager, createdSessions, promptCalls } = createAtlasHarness({ disableModelFallback: true });
+    const taskID = await launchAtlasOracleSubagent(manager);
+
+    //#when a retryable usage_limit error fires
+    emitUsageLimitError(manager, "ses_primary");
+    await flushAsyncWork(60);
+
+    //#then no fallback session is created and the chain is not advanced
+    const task = manager.getTask(taskID);
+    expect(task?.attemptCount ?? 0).toBe(0);
+    expect(createdSessions).toHaveLength(1);
+    expect(promptCalls).toHaveLength(1);
+    expect(subagentSessions.has("ses_fallback")).toBe(false);
+
+    manager.shutdown();
+  });
 
   test("surfaces non-retryable oracle subagent errors without creating a fallback session", async () => {
     //#given
-    const { manager, createdSessions, markSessionMissing } = createAtlasHarness()
-    const taskID = await launchAtlasOracleSubagent(manager)
-    markSessionMissing("ses_primary")
+    const { manager, createdSessions, markSessionMissing } = createAtlasHarness();
+    const taskID = await launchAtlasOracleSubagent(manager);
+    markSessionMissing("ses_primary");
 
     //#when
     manager.handleEvent({
@@ -177,37 +193,37 @@ describe("Atlas-spawned subagent runtime fallback", () => {
         sessionID: "ses_primary",
         error: { name: "PermissionDeniedError", data: { message: "permission denied" } },
       },
-    })
-    await flushAsyncWork(60)
+    });
+    await flushAsyncWork(60);
 
     //#then
-    const task = manager.getTask(taskID)
-    expect(task?.status).toBe("error")
-    expect(task?.error).toBe("permission denied")
-    expect(createdSessions).toHaveLength(1)
+    const task = manager.getTask(taskID);
+    expect(task?.status).toBe("error");
+    expect(task?.error).toBe("permission denied");
+    expect(createdSessions).toHaveLength(1);
 
-    manager.shutdown()
-  })
+    manager.shutdown();
+  });
 
   test("marks oracle subagent errored when usage_limit_reached exhausts all fallbacks", async () => {
     //#given
-    const { manager, createdSessions, markSessionMissing } = createAtlasHarness()
-    const taskID = await launchAtlasOracleSubagent(manager)
-    emitUsageLimitError(manager, "ses_primary")
-    await flushAsyncWork(60)
-    markSessionMissing("ses_fallback")
+    const { manager, createdSessions, markSessionMissing } = createAtlasHarness();
+    const taskID = await launchAtlasOracleSubagent(manager);
+    emitUsageLimitError(manager, "ses_primary");
+    await flushAsyncWork(60);
+    markSessionMissing("ses_fallback");
 
     //#when
-    emitUsageLimitError(manager, "ses_fallback")
-    await flushAsyncWork(60)
+    emitUsageLimitError(manager, "ses_fallback");
+    await flushAsyncWork(60);
 
     //#then
-    const task = manager.getTask(taskID)
-    expect(task?.status).toBe("error")
-    expect(task?.error).toBe("The usage limit has been reached")
-    expect(task?.attemptCount).toBe(1)
-    expect(createdSessions).toHaveLength(2)
+    const task = manager.getTask(taskID);
+    expect(task?.status).toBe("error");
+    expect(task?.error).toBe("The usage limit has been reached");
+    expect(task?.attemptCount).toBe(1);
+    expect(createdSessions).toHaveLength(2);
 
-    manager.shutdown()
-  })
-})
+    manager.shutdown();
+  });
+});

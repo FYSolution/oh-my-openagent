@@ -97767,8 +97767,16 @@ ${AUTO_SLASH_COMMAND_TAG_CLOSE}`;
 var EDIT_ERROR_PATTERNS = [
   "oldString and newString must be different",
   "oldString not found",
-  "oldString found multiple times"
+  "oldString found multiple times",
+  "mismatch",
+  "No changes made",
+  "File not found",
+  "Missing required file path",
+  "must be a non-empty array",
+  "invalid arguments",
+  "SchemaError"
 ];
+var EDIT_ESCALATION_THRESHOLD = 2;
 var EDIT_ERROR_REMINDER = `
 [EDIT ERROR - IMMEDIATE ACTION REQUIRED]
 
@@ -97781,19 +97789,39 @@ You made an Edit mistake. STOP and do this NOW:
 
 DO NOT attempt another edit until you've read and verified the file state.
 `;
+var EDIT_ESCALATION_REMINDER = `
+[REPEATED EDIT FAILURES - CHANGE APPROACH NOW]
+
+The edit tool has failed multiple times in a row. STOP retrying the same edit.
+Switch strategy immediately - pick ONE:
+
+1. RE-READ the exact target range to refresh the LINE#ID tags, then edit once with the real tags.
+2. If edits keep failing, use the write tool to replace the ENTIRE file with the corrected content.
+3. If the change is large or the file is unfamiliar, delegate the task to a subagent (task tool) to execute it directly.
+
+DO NOT issue another near-identical edit call.
+`;
 function createEditErrorRecoveryHook(_ctx) {
+  const consecutiveFailures = new Map;
   return {
     "tool.execute.after": async (input, output) => {
       if (input.tool.toLowerCase() !== "edit")
         return;
       if (typeof output.output !== "string")
         return;
-      const outputLower = (output.output ?? "").toLowerCase();
+      if (output.output.includes("[EDIT ERROR") || output.output.includes("[REPEATED EDIT FAILURES"))
+        return;
+      const outputLower = output.output.toLowerCase();
       const hasEditError = EDIT_ERROR_PATTERNS.some((pattern) => outputLower.includes(pattern.toLowerCase()));
-      if (hasEditError) {
-        output.output += `
-${EDIT_ERROR_REMINDER}`;
+      if (!hasEditError) {
+        consecutiveFailures.delete(input.sessionID);
+        return;
       }
+      const failureCount = (consecutiveFailures.get(input.sessionID) ?? 0) + 1;
+      consecutiveFailures.set(input.sessionID, failureCount);
+      const reminder = failureCount >= EDIT_ESCALATION_THRESHOLD ? EDIT_ESCALATION_REMINDER : EDIT_ERROR_REMINDER;
+      output.output += `
+${reminder}`;
     }
   };
 }
@@ -103341,6 +103369,14 @@ init_logger2();
 var PREEMPTIVE_COMPACTION_TIMEOUT_MS2 = 60000;
 var PREEMPTIVE_COMPACTION_THRESHOLD = 0.78;
 var PREEMPTIVE_COMPACTION_COOLDOWN_MS = 60000;
+function resolveReservedOutputTokens(providerID, modelID, actualLimit) {
+  if (!modelID)
+    return 0;
+  const maxOutputTokens = getModelCapabilities2({ providerID, modelID }).maxOutputTokens;
+  if (typeof maxOutputTokens !== "number" || maxOutputTokens <= 0)
+    return 0;
+  return Math.min(maxOutputTokens, Math.floor(actualLimit / 2));
+}
 async function withTimeout3(promise, timeoutMs, errorMessage) {
   let timeoutID;
   const timeoutPromise = new Promise((_, reject) => {
@@ -103353,16 +103389,7 @@ async function withTimeout3(promise, timeoutMs, errorMessage) {
   });
 }
 async function runPreemptiveCompactionIfNeeded(args) {
-  const {
-    ctx,
-    pluginConfig,
-    modelCacheState,
-    sessionID,
-    tokenCache,
-    compactionInProgress,
-    compactedSessions,
-    lastCompactionTime
-  } = args;
+  const { ctx, pluginConfig, modelCacheState, sessionID, tokenCache, compactionInProgress, compactedSessions, lastCompactionTime } = args;
   if (compactedSessions.has(sessionID) || compactionInProgress.has(sessionID))
     return;
   const lastTime = lastCompactionTime.get(sessionID);
@@ -103380,7 +103407,8 @@ async function runPreemptiveCompactionIfNeeded(args) {
     return;
   }
   const totalInputTokens = (cached.tokens.input ?? 0) + (cached.tokens.cache?.read ?? 0);
-  const usageRatio = totalInputTokens / actualLimit;
+  const reservedOutputTokens = resolveReservedOutputTokens(cached.providerID, cached.modelID, actualLimit);
+  const usageRatio = (totalInputTokens + reservedOutputTokens) / actualLimit;
   if (usageRatio < PREEMPTIVE_COMPACTION_THRESHOLD || !cached.modelID)
     return;
   compactionInProgress.add(sessionID);
@@ -123774,12 +123802,7 @@ function forgetBackgroundTask(taskID) {
 }
 
 // packages/omo-opencode/src/features/background-agent/manager.ts
-var TERMINAL_BACKGROUND_TASK_STATUSES = new Set([
-  "completed",
-  "error",
-  "cancelled",
-  "interrupt"
-]);
+var TERMINAL_BACKGROUND_TASK_STATUSES = new Set(["completed", "error", "cancelled", "interrupt"]);
 var PENDING_PARENT_WAKE_RETRY_MS = 1000;
 var PENDING_PARENT_WAKE_DEBOUNCE_MS = 100;
 var PARENT_WAKE_ACCEPTED_MESSAGE_SKEW_MS = 5000;
@@ -123829,6 +123852,7 @@ class BackgroundManager {
   concurrencyManager;
   shutdownTriggered = false;
   config;
+  disableModelFallback;
   tmuxEnabled;
   onSubagentSessionCreated;
   onSubagentSessionDeleted;
@@ -123863,6 +123887,7 @@ class BackgroundManager {
     this.directory = pluginContext.directory;
     this.concurrencyManager = new ConcurrencyManager(options.config);
     this.config = options.config;
+    this.disableModelFallback = options.disableModelFallback ?? false;
     this.tmuxEnabled = options?.tmuxConfig?.enabled ?? false;
     this.onSubagentSessionCreated = options?.onSubagentSessionCreated;
     this.onSubagentSessionDeleted = options?.onSubagentSessionDeleted;
@@ -124089,7 +124114,10 @@ class BackgroundManager {
     if (!input.agent || input.agent.trim() === "") {
       throw new Error("Agent parameter is required");
     }
-    input = { ...input, agent: input.agent.trim().replace(/^[\\/"']+|[\\/"']+$/g, "").trim() };
+    input = {
+      ...input,
+      agent: input.agent.trim().replace(/^[\\/"']+|[\\/"']+$/g, "").trim()
+    };
     if (!input.agent) {
       throw new Error("Agent parameter is required after sanitization");
     }
@@ -124126,7 +124154,13 @@ class BackgroundManager {
       };
       const firstAttempt = startAttempt(task, input.model);
       this.addTask(task);
-      this.taskHistory.record(input.parentSessionId, { id: task.id, agent: input.agent, description: input.description, status: "pending", category: input.category });
+      this.taskHistory.record(input.parentSessionId, {
+        id: task.id,
+        agent: input.agent,
+        description: input.description,
+        status: "pending",
+        category: input.category
+      });
       if (input.parentSessionId) {
         const pending = this.pendingByParent.get(input.parentSessionId) ?? new Set;
         pending.add(task.id);
@@ -124328,7 +124362,15 @@ The fallback retry session is now created and can be inspected directly.
 </system-reminder>`, parentPromptContext, false, PENDING_PARENT_WAKE_DEBOUNCE_MS);
       task.retryNotification = undefined;
     }
-    this.taskHistory.record(input.parentSessionId, { id: task.id, sessionID, agent: input.agent, description: input.description, status: "running", category: input.category, startedAt: task.startedAt });
+    this.taskHistory.record(input.parentSessionId, {
+      id: task.id,
+      sessionID,
+      agent: input.agent,
+      description: input.description,
+      status: "running",
+      category: input.category,
+      startedAt: task.startedAt
+    });
     this.startPolling();
     const launchModel = input.model ? {
       providerID: input.model.providerID,
@@ -124605,7 +124647,11 @@ The fallback retry session is now created and can be inspected directly.
       } else if (!parentChanged) {
         this.cleanupPendingByParent(existingTask);
       }
-      log2("[background-agent] External task already registered:", { taskId: existingTask.id, sessionID: existingTask.sessionId, status: existingTask.status });
+      log2("[background-agent] External task already registered:", {
+        taskId: existingTask.id,
+        sessionID: existingTask.sessionId,
+        status: existingTask.status
+      });
       return existingTask;
     }
     const concurrencyKey = input.concurrencyKey ? this.concurrencyManager.getConcurrencyKey(input.concurrencyKey) : undefined;
@@ -124634,7 +124680,14 @@ The fallback retry session is now created and can be inspected directly.
     this.addTask(task);
     subagentSessions.add(input.sessionId);
     this.startPolling();
-    this.taskHistory.record(input.parentSessionId, { id: task.id, sessionID: input.sessionId, agent: input.agent || "task", description: input.description, status: "running", startedAt: task.startedAt });
+    this.taskHistory.record(input.parentSessionId, {
+      id: task.id,
+      sessionID: input.sessionId,
+      agent: input.agent || "task",
+      description: input.description,
+      status: "running",
+      startedAt: task.startedAt
+    });
     if (input.parentSessionId) {
       const pending = this.pendingByParent.get(input.parentSessionId) ?? new Set;
       pending.add(task.id);
@@ -125304,7 +125357,16 @@ The fallback retry session is now created and can be inspected directly.
     if (task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId);
     }
-    this.taskHistory.record(task.parentSessionId, { id: task.id, sessionID: task.sessionId, agent: task.agent, description: task.description, status: "error", category: task.category, startedAt: task.startedAt, completedAt: task.completedAt });
+    this.taskHistory.record(task.parentSessionId, {
+      id: task.id,
+      sessionID: task.sessionId,
+      agent: task.agent,
+      description: task.description,
+      status: "error",
+      category: task.category,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt
+    });
     if (task.concurrencyKey) {
       this.concurrencyManager.release(task.concurrencyKey);
       task.concurrencyKey = undefined;
@@ -125339,6 +125401,8 @@ The fallback retry session is now created and can be inspected directly.
     });
   }
   async tryFallbackRetry(task, errorInfo, source) {
+    if (this.disableModelFallback)
+      return false;
     const previousSessionID = task.sessionId;
     let retryingNotification;
     const result = tryFallbackRetry({
@@ -125552,7 +125616,16 @@ The task was re-queued on a fallback model after a retryable failure.
     if (wasRunning && task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId);
     }
-    this.taskHistory.record(task.parentSessionId, { id: task.id, sessionID: task.sessionId, agent: task.agent, description: task.description, status: "cancelled", category: task.category, startedAt: task.startedAt, completedAt: task.completedAt });
+    this.taskHistory.record(task.parentSessionId, {
+      id: task.id,
+      sessionID: task.sessionId,
+      agent: task.agent,
+      description: task.description,
+      status: "cancelled",
+      category: task.category,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt
+    });
     if (task.concurrencyKey) {
       this.concurrencyManager.release(task.concurrencyKey);
       task.concurrencyKey = undefined;
@@ -125636,7 +125709,16 @@ The task was re-queued on a fallback model after a retryable failure.
         task.status = "completed";
         task.completedAt = new Date;
       }
-      this.taskHistory.record(task.parentSessionId, { id: task.id, sessionID: task.sessionId, agent: task.agent, description: task.description, status: "completed", category: task.category, startedAt: task.startedAt, completedAt: task.completedAt });
+      this.taskHistory.record(task.parentSessionId, {
+        id: task.id,
+        sessionID: task.sessionId,
+        agent: task.agent,
+        description: task.description,
+        status: "completed",
+        category: task.category,
+        startedAt: task.startedAt,
+        completedAt: task.completedAt
+      });
       if (task.rootSessionId) {
         this.unregisterRootDescendant(task.rootSessionId);
       }
@@ -125712,7 +125794,9 @@ The task was re-queued on a fallback model after a retryable failure.
       remainingCount = Array.from(this.tasks.values()).filter((t2) => t2.parentSessionId === task.parentSessionId && t2.id !== task.id && (t2.status === "running" || t2.status === "pending")).length;
       allComplete = remainingCount === 0;
     }
-    const completedTasks = allComplete ? this.completedTaskSummaries.get(task.parentSessionId) ?? [{ id: task.id, description: task.description, status: task.status, error: task.error, attempts: cloneAttempts2(task) }] : [];
+    const completedTasks = allComplete ? this.completedTaskSummaries.get(task.parentSessionId) ?? [
+      { id: task.id, description: task.description, status: task.status, error: task.error, attempts: cloneAttempts2(task) }
+    ] : [];
     if (allComplete) {
       this.completedTaskSummaries.delete(task.parentSessionId);
     }
@@ -125827,14 +125911,27 @@ The task was re-queued on a fallback model after a retryable failure.
       sessionStatuses: allStatuses,
       onTaskPruned: (taskId, task, errorMessage) => {
         const wasPending = task.status === "pending";
-        log2("[background-agent] Pruning stale task:", { taskId, status: task.status, age: Math.round(((wasPending ? task.queuedAt?.getTime() : task.startedAt?.getTime()) ? Date.now() - (wasPending ? task.queuedAt.getTime() : task.startedAt.getTime()) : 0) / 1000) + "s" });
+        log2("[background-agent] Pruning stale task:", {
+          taskId,
+          status: task.status,
+          age: Math.round(((wasPending ? task.queuedAt?.getTime() : task.startedAt?.getTime()) ? Date.now() - (wasPending ? task.queuedAt.getTime() : task.startedAt.getTime()) : 0) / 1000) + "s"
+        });
         task.status = "error";
         task.error = errorMessage;
         task.completedAt = new Date;
         if (!wasPending && task.rootSessionId) {
           this.unregisterRootDescendant(task.rootSessionId);
         }
-        this.taskHistory.record(task.parentSessionId, { id: task.id, sessionID: task.sessionId, agent: task.agent, description: task.description, status: "error", category: task.category, startedAt: task.startedAt, completedAt: task.completedAt });
+        this.taskHistory.record(task.parentSessionId, {
+          id: task.id,
+          sessionID: task.sessionId,
+          agent: task.agent,
+          description: task.description,
+          status: "error",
+          category: task.category,
+          startedAt: task.startedAt,
+          completedAt: task.completedAt
+        });
         if (task.concurrencyKey) {
           this.concurrencyManager.release(task.concurrencyKey);
           task.concurrencyKey = undefined;
@@ -125899,7 +125996,16 @@ The task was re-queued on a fallback model after a retryable failure.
     if (task.rootSessionId) {
       this.unregisterRootDescendant(task.rootSessionId);
     }
-    this.taskHistory.record(task.parentSessionId, { id: task.id, sessionID: task.sessionId, agent: task.agent, description: task.description, status: "error", category: task.category, startedAt: task.startedAt, completedAt: task.completedAt });
+    this.taskHistory.record(task.parentSessionId, {
+      id: task.id,
+      sessionID: task.sessionId,
+      agent: task.agent,
+      description: task.description,
+      status: "error",
+      category: task.category,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt
+    });
     if (task.concurrencyKey) {
       this.concurrencyManager.release(task.concurrencyKey);
       task.concurrencyKey = undefined;
@@ -147645,6 +147751,7 @@ function createManagers(args) {
   backgroundManager = new deps.BackgroundManagerClass({
     pluginContext: ctx,
     config: pluginConfig.background_task,
+    disableModelFallback: pluginConfig.model_fallback === false,
     tmuxConfig,
     onSubagentSessionCreated: async (event) => {
       log2("[create-managers] onSubagentSessionCreated callback received", {
